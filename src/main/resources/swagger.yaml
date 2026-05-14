@@ -1,0 +1,412 @@
+openapi: 3.0.3
+info:
+  title: Users API
+  version: 1.0.0
+  description: >
+    REST API for managing users. Designed for automatic backend generation
+    and Cosmos DB integration. All responses follow a standardized envelope.
+
+servers:
+  - url: https://localhost:3000
+    description: Production server
+
+tags:
+  - name: Users
+    description: Operations related to user lifecycle management
+  - name: System
+    description: Health and system status endpoints
+    
+security:
+  - basicAuth: []
+
+paths:
+
+  /users:
+    get:
+      tags: [Users]
+      summary: Get all users
+      description: Retrieve all users.
+      operationId: getUsers
+      responses:
+        '200':
+          $ref: '#/components/responses/UserListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [Users]
+      summary: Create user
+      description: Create a new user.
+      operationId: createUser
+      requestBody:
+        $ref: '#/components/requestBodies/CreateUserRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/UserCreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID
+      description: Retrieve a user by UUID.
+      operationId: getUserById
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          $ref: '#/components/responses/UserSingleResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags: [Users]
+      summary: Update user partially
+      description: Update a user using PATCH.
+      operationId: updateUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        $ref: '#/components/requestBodies/UpdateUserRequest'
+      responses:
+        '204':
+          description: User updated successfully (no content)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags: [Users]
+      summary: Delete user
+      description: Delete a user by UUID.
+      operationId: deleteUser
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: User deleted successfully (no content)
+        '404':
+          $ref: '#/components/responses/NotFound'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+  /system/status:
+    get:
+      tags: [System]
+      summary: System status
+      description: Retrieve system health status.
+      operationId: getSystemStatus
+      responses:
+        '200':
+          $ref: '#/components/responses/SystemStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        'default':
+          $ref: '#/components/responses/InternalError'
+
+components:
+
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Authentication basic
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User UUID
+      schema:
+        type: string
+        format: uuid
+
+  requestBodies:
+
+    CreateUserRequest:
+      description: Payload to create a user
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CreateUser'
+          examples:
+            default:
+              $ref: '#/components/examples/CreateUserExample'
+
+    UpdateUserRequest:
+      description: Payload to update user
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UpdateUser'
+          examples:
+            default:
+              $ref: '#/components/examples/UpdateUserExample'
+
+  responses:
+
+    UserListResponse:
+      description: List of users
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UserListEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/UserListExample'
+
+    UserSingleResponse:
+      description: Single user
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UserSingleEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/UserSingleExample'
+
+    UserCreateResponse:
+      description: User created
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UserCreateEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/UserCreateExample'
+
+    SystemStatusResponse:
+      description: System health status
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SystemStatusEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/SystemStatusExample'
+
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/BadRequestExample'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/NotFoundExample'
+
+    Conflict:
+      description: Conflict error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/ConflictExample'
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+          examples:
+            default:
+              $ref: '#/components/examples/InternalErrorExample'
+
+  schemas:
+
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, name, email, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateUser:
+      type: object
+      additionalProperties: false
+      required: [name, email]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+
+    UpdateUser:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    SystemStatusItem:
+      type: object
+      additionalProperties: false
+      required: [service, status]
+      properties:
+        service:
+          type: string
+        status:
+          type: string
+          enum: [ok, down]
+
+    UserListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+
+    UserSingleEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/User'
+
+    UserCreateEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              format: uuid
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+    SystemStatusEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemStatusItem'
+
+  examples:
+
+    CreateUserExample:
+      value:
+        name: John Doe
+        email: john@example.com
+
+    UpdateUserExample:
+      value:
+        name: Updated Name
+
+    UserListExample:
+      value:
+        data:
+          - id: "ac683061-7334-40a1-ae84-93e9194ef405"
+            name: John
+            email: john@example.com
+            createdAt: "2025-01-01T00:00:00Z"
+
+    UserSingleExample:
+      value:
+        data:
+          id: "ac683061-7334-40a1-ae84-93e9194ef405"
+          name: John
+          email: john@example.com
+          createdAt: "2025-01-01T00:00:00Z"
+
+    UserCreateExample:
+      value:
+        data:
+          id: "ac683061-7334-40a1-ae84-93e9194ef405"
+
+    SystemStatusExample:
+      value:
+        data:
+          - service: database
+            status: ok
+          - service: rabbitmq
+            status: ok
+
+    BadRequestExample:
+      value:
+        error:
+          code: BAD_REQUEST
+          message: Invalid input
+
+    NotFoundExample:
+      value:
+        error:
+          code: NOT_FOUND
+          message: User not found
+
+    ConflictExample:
+      value:
+        error:
+          code: CONFLICT
+          message: User already exists
+
+    InternalErrorExample:
+      value:
+        error:
+          code: INTERNAL_ERROR
+          message: Unexpected error
