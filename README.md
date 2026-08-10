@@ -97,7 +97,7 @@ definen se usa el valor por defecto.
 | `APP_SERVICE_SKU` | `F1`, `B1` o `B2` | `B1` |
 | `SQL_SKU_NAME` | `Basic`, `S0` o `GP_S_Gen5_1` | `Basic` |
 | `SQL_DATABASE_NAME` | Nombre de la base de datos | `sqldb-users` |
-| `NR_OTLP_ENDPOINT` | Endpoint OTLP. EU: `https://otlp.eu01.nr-data.net`, US: `https://otlp.nr-data.net` | `https://otlp.eu01.nr-data.net` |
+| `NR_OTLP_ENDPOINT` | Endpoint OTLP. EU: `https://otlp.eu01.nr-data.net:4318`, US: `https://otlp.nr-data.net:4318` | `https://otlp.eu01.nr-data.net:4318` |
 | `OTEL_SERVICE_NAME` | Nombre del servicio en New Relic | `microservice-users` |
 | `ENVIRONMENT` | Atributo `deployment.environment` | `poc` |
 | `SERVICE_NAMESPACE` | Atributo `service.namespace`, común a todo el PoC | `poc-observability` |
@@ -409,7 +409,7 @@ Variables aplicadas (las que documenta New Relic para su endpoint OTLP):
 
 | Variable | Valor | Por qué |
 |----------|-------|---------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `https://otlp.eu01.nr-data.net` | Endpoint OTLP de la cuenta |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `https://otlp.eu01.nr-data.net:4318` | Endpoint OTLP de la cuenta |
 | `OTEL_EXPORTER_OTLP_HEADERS` | `api-key=<license key>` | Autenticación de ingesta |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Único protocolo OTLP admitido por New Relic |
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` | Reduce el volumen de red |

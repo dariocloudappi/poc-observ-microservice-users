@@ -66,8 +66,8 @@ param enableActivityLogExport bool = false
 ])
 param appServiceSku string = 'B1'
 
-@description('Java options applied to the app. The agent path must match the deployment layout')
-param javaOpts string = '-javaagent:/home/site/wwwroot/otel-javaagent.jar -Xmx512m'
+@description('JVM flags applied through JAVA_TOOL_OPTIONS. Do NOT put -javaagent here: the JVM applies these flags always, and a missing agent jar would stop the app from starting at all. startup.sh attaches the agent')
+param javaOpts string = '-Xmx512m'
 
 // -----------------------------------------------------------------------------
 // Database
@@ -113,8 +113,8 @@ param basicAuthPassword string
 @secure()
 param newRelicLicenseKey string
 
-@description('New Relic OTLP endpoint. EU accounts use https://otlp.eu01.nr-data.net')
-param newRelicOtlpEndpoint string = 'https://otlp.eu01.nr-data.net'
+@description('New Relic OTLP endpoint. EU accounts use https://otlp.eu01.nr-data.net:4318')
+param newRelicOtlpEndpoint string = 'https://otlp.eu01.nr-data.net:4318'
 
 @description('Turns the OpenTelemetry export on or off without touching code')
 param observabilityEnabled bool = true

@@ -1,14 +1,14 @@
 #!/bin/bash
 # =============================================================================
-# startup.sh - optional startup command for Azure App Service
+# startup.sh - startup command of the Azure App Service
 # -----------------------------------------------------------------------------
-# The pipeline does NOT need this script: the Java SE image already runs
-# /home/site/wwwroot/app.jar, and the OpenTelemetry agent is attached through
-# the JAVA_TOOL_OPTIONS app setting defined in infra/main.bicep.
+# This script IS the startup command: infra/modules/appservice.bicep sets
+# appCommandLine to "bash /home/site/wwwroot/startup.sh", and the pipeline
+# ships it inside the deployment package next to app.jar.
 #
-# Use it only if you need to control the JVM flags by hand. In that case set
-# the App Service startup command to:
-#   bash /home/site/wwwroot/startup.sh
+# It exists so that attaching the agent is a decision taken at run time. If
+# -javaagent lived in JAVA_TOOL_OPTIONS, the JVM would apply it always and a
+# missing agent jar would stop the process from starting at all.
 #
 # The agent is attached here explicitly when JAVA_TOOL_OPTIONS does not already
 # declare it, so the script instruments the application on its own. If the app

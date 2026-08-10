@@ -35,7 +35,7 @@ param enableLogAnalytics = bool(readEnvironmentVariable('ENABLE_LOG_ANALYTICS', 
 param enableActivityLogExport = bool(readEnvironmentVariable('ENABLE_ACTIVITY_LOG_EXPORT', 'false'))
 
 param appServiceSku = readEnvironmentVariable('APP_SERVICE_SKU', 'B1')
-param javaOpts = readEnvironmentVariable('JAVA_OPTS', '-javaagent:/home/site/wwwroot/otel-javaagent.jar -Xmx512m')
+param javaOpts = readEnvironmentVariable('JAVA_OPTS', '-Xmx512m')
 
 param sqlSkuName = readEnvironmentVariable('SQL_SKU_NAME', 'Basic')
 param sqlDatabaseName = readEnvironmentVariable('SQL_DATABASE_NAME', 'sqldb-users')
@@ -46,7 +46,7 @@ param basicAuthUser = readEnvironmentVariable('BASIC_AUTH_USER', '')
 param basicAuthPassword = readEnvironmentVariable('BASIC_AUTH_PASSWORD', '')
 
 param newRelicLicenseKey = readEnvironmentVariable('NR_LICENSE_KEY', '')
-param newRelicOtlpEndpoint = readEnvironmentVariable('NR_OTLP_ENDPOINT', 'https://otlp.eu01.nr-data.net')
+param newRelicOtlpEndpoint = readEnvironmentVariable('NR_OTLP_ENDPOINT', 'https://otlp.eu01.nr-data.net:4318')
 
 param observabilityEnabled = bool(readEnvironmentVariable('OBSERVABILITY_ENABLED', 'true'))
 param serviceName = readEnvironmentVariable('OTEL_SERVICE_NAME', 'microservice-users')

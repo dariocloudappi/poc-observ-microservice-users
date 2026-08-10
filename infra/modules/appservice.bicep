@@ -1,9 +1,9 @@
 // =============================================================================
 // modules/appservice.bicep - Linux App Service plan and web app
 // -----------------------------------------------------------------------------
-// Runs the Spring Boot jar on the Java SE 17 blessed image. The OpenTelemetry
-// Java agent is attached through JAVA_TOOL_OPTIONS, so the application code
-// carries no instrumentation (zero-code).
+// Runs the Spring Boot jar on the Java SE 17 blessed image through
+// startup.sh, which attaches the OpenTelemetry Java agent. The application
+// code carries no instrumentation (zero-code).
 //
 // Every OTEL_* setting below is the configuration New Relic documents for its
 // OTLP endpoint. Changing account or region only requires changing the
@@ -76,8 +76,13 @@ var platformSettings = [
     value: 'false'
   }
   {
+    // Memory flags only. The agent is deliberately NOT declared here: the JVM
+    // applies JAVA_TOOL_OPTIONS unconditionally, so while the package is not
+    // deployed yet the process cannot even start ("agent library failed to
+    // init"). startup.sh attaches the agent after checking that the jar is
+    // actually there.
     name: 'JAVA_TOOL_OPTIONS'
-    value: observabilityEnabled ? javaOpts : '-Xmx512m'
+    value: javaOpts
   }
   {
     name: 'ENVIRONMENT'
@@ -249,6 +254,11 @@ var otelEnabledSettings = [
 
 var otelDisabledSettings = [
   {
+    // The agent is still attached, but it disables itself.
+    name: 'OTEL_JAVAAGENT_ENABLED'
+    value: 'false'
+  }
+  {
     name: 'OTEL_TRACES_EXPORTER'
     value: 'none'
   }
@@ -280,6 +290,9 @@ var appSettings = concat(
 // overwrite the value already present in the web app.
 var baseSiteConfig = {
   linuxFxVersion: 'JAVA|17-java17'
+  // startup.sh travels in the deployment package and attaches the agent only
+  // if the jar is present, so a half deployed wwwroot does not stop the app.
+  appCommandLine: 'bash /home/site/wwwroot/startup.sh'
   minTlsVersion: '1.2'
   scmMinTlsVersion: '1.2'
   ftpsState: 'Disabled'
