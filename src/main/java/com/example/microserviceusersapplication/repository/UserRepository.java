@@ -1,6 +1,6 @@
 package com.example.microserviceusersapplication.repository;
 
-import com.example.microserviceusersapplication.model.User;
+import com.example.microserviceusersapplication.models.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.UUID;

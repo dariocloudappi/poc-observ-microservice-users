@@ -1,4 +1,4 @@
-package com.example.microserviceusersapplication.dto;
+package com.example.microserviceusersapplication.dtos;
 
 import java.util.List;
 

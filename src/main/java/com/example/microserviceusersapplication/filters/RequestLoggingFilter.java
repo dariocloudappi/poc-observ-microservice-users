@@ -1,4 +1,4 @@
-package com.example.microserviceusersapplication.filter;
+package com.example.microserviceusersapplication.filters;
 
 import io.opentelemetry.api.trace.Span;
 import jakarta.servlet.FilterChain;

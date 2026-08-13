@@ -1,11 +1,11 @@
-package com.example.microserviceusersapplication.controller;
+package com.example.microserviceusersapplication.controllers;
 
-import com.example.microserviceusersapplication.dto.DataEnvelope;
-import com.example.microserviceusersapplication.dto.UserCreateResponse;
-import com.example.microserviceusersapplication.model.CreateUserRequest;
-import com.example.microserviceusersapplication.model.UpdateUserRequest;
-import com.example.microserviceusersapplication.model.User;
-import com.example.microserviceusersapplication.service.UserService;
+import com.example.microserviceusersapplication.dtos.DataEnvelope;
+import com.example.microserviceusersapplication.dtos.UserCreateResponse;
+import com.example.microserviceusersapplication.models.CreateUserRequest;
+import com.example.microserviceusersapplication.models.UpdateUserRequest;
+import com.example.microserviceusersapplication.models.User;
+import com.example.microserviceusersapplication.services.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

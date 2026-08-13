@@ -1,10 +1,10 @@
-package com.example.microserviceusersapplication.service;
+package com.example.microserviceusersapplication.services;
 
-import com.example.microserviceusersapplication.exception.UserAlreadyExistsException;
-import com.example.microserviceusersapplication.exception.UserNotFoundException;
-import com.example.microserviceusersapplication.model.CreateUserRequest;
-import com.example.microserviceusersapplication.model.UpdateUserRequest;
-import com.example.microserviceusersapplication.model.User;
+import com.example.microserviceusersapplication.exceptions.UserAlreadyExistsException;
+import com.example.microserviceusersapplication.exceptions.UserNotFoundException;
+import com.example.microserviceusersapplication.models.CreateUserRequest;
+import com.example.microserviceusersapplication.models.UpdateUserRequest;
+import com.example.microserviceusersapplication.models.User;
 import com.example.microserviceusersapplication.repository.UserRepository;
 import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;

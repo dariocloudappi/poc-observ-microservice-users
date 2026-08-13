@@ -1,7 +1,7 @@
-package com.example.microserviceusersapplication.controller;
+package com.example.microserviceusersapplication.controllers;
 
-import com.example.microserviceusersapplication.dto.SystemStatusResponse;
-import com.example.microserviceusersapplication.service.SystemService;
+import com.example.microserviceusersapplication.dtos.SystemStatusResponse;
+import com.example.microserviceusersapplication.services.SystemService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;

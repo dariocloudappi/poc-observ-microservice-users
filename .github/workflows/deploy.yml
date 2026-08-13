@@ -216,6 +216,7 @@ jobs:
           check ENVIRONMENT "$ENVIRONMENT"
           check OTEL_SERVICE_NAME "$OTEL_SERVICE_NAME"
           check LOG_LEVEL "$LOG_LEVEL"
+          check SQL_LOG_LEVEL "$SQL_LOG_LEVEL"
           check OTEL_EXPORTER_OTLP_ENDPOINT "$NR_OTLP_ENDPOINT"
           check SQL_DATABASE "$SQL_DATABASE_NAME"
           echo "Every checked setting matches the deployed value."

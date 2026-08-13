@@ -1,7 +1,7 @@
-package com.example.microserviceusersapplication.service;
+package com.example.microserviceusersapplication.services;
 
-import com.example.microserviceusersapplication.dto.ServiceStatus;
-import com.example.microserviceusersapplication.dto.SystemStatusResponse;
+import com.example.microserviceusersapplication.dtos.ServiceStatus;
+import com.example.microserviceusersapplication.dtos.SystemStatusResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;

@@ -1,6 +1,6 @@
-package com.example.microserviceusersapplication.exception;
+package com.example.microserviceusersapplication.exceptions;
 
-import com.example.microserviceusersapplication.dto.ErrorEnvelope;
+import com.example.microserviceusersapplication.dtos.ErrorEnvelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;

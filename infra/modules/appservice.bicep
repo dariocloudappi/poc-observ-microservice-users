@@ -93,10 +93,13 @@ var platformSettings = [
     value: logLevel
   }
   {
-    // Spring Boot relaxed binding: this maps to logging.level.org.hibernate.SQL
+    // Read by application.yaml as the level of the org.hibernate.SQL logger.
     // Set it to DEBUG to ship every executed statement as a log record, which
     // travels to New Relic through the Logback instrumentation of the agent.
-    name: 'LOGGING_LEVEL_ORG_HIBERNATE_SQL'
+    // It is NOT named LOGGING_LEVEL_ORG_HIBERNATE_SQL because Spring Boot
+    // relaxed binding lowercases environment variable names, and the logger
+    // "org.hibernate.sql" is not the logger "org.hibernate.SQL".
+    name: 'SQL_LOG_LEVEL'
     value: sqlLogLevel
   }
 ]
