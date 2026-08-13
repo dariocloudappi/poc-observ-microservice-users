@@ -26,6 +26,9 @@ param logAnalyticsWorkspaceId string
 @description('Send the diagnostic settings of the database to Log Analytics. Turn it off when the Azure Native New Relic Service already forwards them, to avoid paying twice for the same data')
 param enableLogAnalytics bool = true
 
+@description('Enable Azure SQL Auditing. The diagnostic categories the database publishes by default only report problems (errors, timeouts, blocks, deadlocks), so a query that succeeds produces no log at all. Auditing is the only per statement log the engine itself emits. Off by default because it is verbose and every record counts against the daily ingestion cap')
+param enableSqlAudit bool = false
+
 // Basic is capped at 2 GB by the service. The serverless option gets a larger
 // cap because its storage is billed per GB actually used.
 var maxSizeBytes = sqlSkuName == 'Basic' ? 2147483648 : 34359738368
@@ -115,6 +118,35 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
         category: 'Basic'
         enabled: true
       }
+    ]
+  }
+}
+
+// The only per statement log Azure SQL emits. It is written by the engine, not
+// by the application, so it also catches whatever connects to the database from
+// outside this service.
+//
+// isAzureMonitorTargetEnabled routes the records to the diagnostic settings
+// instead of to a storage account, which is what keeps this free of extra
+// resources. The category SQLSecurityAuditEvents already travels inside the
+// allLogs group above, but it stays silent until this policy exists.
+//
+// It depends on the diagnostic setting on purpose: with Azure Monitor as the
+// target, the destination has to be in place before auditing is turned on.
+resource databaseAuditing 'Microsoft.Sql/servers/databases/auditingSettings@2023-08-01-preview' = if (enableSqlAudit) {
+  parent: database
+  name: 'default'
+  dependsOn: [
+    databaseDiagnostics
+  ]
+  properties: {
+    state: 'Enabled'
+    isAzureMonitorTargetEnabled: true
+    auditActionsAndGroups: [
+      // One record per statement batch executed against the database.
+      'BATCH_COMPLETED_GROUP'
+      'SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP'
+      'FAILED_DATABASE_AUTHENTICATION_GROUP'
     ]
   }
 }

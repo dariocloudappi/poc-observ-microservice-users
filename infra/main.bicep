@@ -54,6 +54,9 @@ param enableLogAnalytics bool = true
 @description('Export the subscription Activity Log to the workspace. Off by default because it is a subscription wide change')
 param enableActivityLogExport bool = false
 
+@description('Enable Azure SQL Auditing, the only per statement log the database engine emits. Without it a successful query leaves no trace in Azure Monitor, because the default categories only report errors, timeouts, blocks and deadlocks. Off by default: it is verbose and every record counts against the daily ingestion cap')
+param enableSqlAudit bool = false
+
 // -----------------------------------------------------------------------------
 // Compute
 // -----------------------------------------------------------------------------
@@ -184,6 +187,7 @@ module sql './modules/sql.bicep' = {
     administratorPassword: sqlAdminPassword
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     enableLogAnalytics: enableLogAnalytics
+    enableSqlAudit: enableSqlAudit
   }
 }
 

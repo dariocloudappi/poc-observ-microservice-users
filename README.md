@@ -406,15 +406,21 @@ autodesactiva (`OTEL_JAVAAGENT_ENABLED=false`) y los tres exporters pasan a `non
 
 ## 5. Telemetría de base de datos
 
-Es la parte que más confusión genera, porque hay **tres cosas distintas** que se suelen llamar
+Es la parte que más confusión genera, porque hay **cinco cosas distintas** que se suelen llamar
 igual y llegan por caminos separados.
 
-| Qué | De dónde sale | Dónde se ve | Requiere |
-|-----|---------------|-------------|----------|
+| Qué | Quién lo emite | Dónde se ve | Requiere |
+|-----|----------------|-------------|----------|
 | **Spans de SQL**: una consulta, su duración y su sentencia | Agente OTel, instrumentando JDBC | New Relic, `Span` | Nada, va por defecto |
 | **Métricas del pool** de conexiones | Micrometer vía Actuator | New Relic, `Metric` | Nada, va por defecto |
-| **Logs de SQL**: la sentencia como registro de log | Logger `org.hibernate.SQL` | New Relic, `Log` | `SQL_LOG_LEVEL=DEBUG` |
-| **Logs de plataforma** del servicio SQL: errores, timeouts, deadlocks, Query Store | Azure Monitor, no la aplicación | Log Analytics y/o New Relic | Diagnostic Setting, y **que ocurra el evento** |
+| **Logs de SQL**: la sentencia como registro de log | La aplicación, logger `org.hibernate.SQL` | New Relic, `Log` | `SQL_LOG_LEVEL=DEBUG` |
+| **Logs de plataforma**: errores, timeouts, bloqueos, deadlocks, Query Store | Azure Monitor | Log Analytics y/o New Relic | Diagnostic Setting, y **que ocurra el evento** |
+| **Auditoría**: una entrada por sentencia ejecutada | El motor SQL | Log Analytics y/o New Relic, `SQLSecurityAuditEvents` | `ENABLE_SQL_AUDIT=true` |
+
+La distinción que más cuesta al empezar es **quién emite el log**. Las tres primeras filas las
+emite tu aplicación: es tu proceso Java contando lo que hace. Las dos últimas las emite Azure.
+Una base de datos PaaS no tiene sistema de ficheros al que asomarse ni un agente que instalar
+dentro: lo único que puede publicar es lo que Azure Monitor le deja publicar.
 
 ### 5.1 Spans de SQL (activo por defecto)
 
@@ -530,6 +536,53 @@ AzureDiagnostics
 | order by TimeGenerated desc | take 20"
 ```
 
+### 5.4 Auditoría: el log por sentencia del propio motor
+
+Si lo que buscas es "la base de datos registrando cada consulta que recibe", eso existe y se
+llama **Azure SQL Auditing**. Es lo más parecido a un logger propio que tiene el servicio, y
+va a la categoría `SQLSecurityAuditEvents`, tabla del mismo nombre en Log Analytics.
+
+Con el grupo de acciones `BATCH_COMPLETED_GROUP` escribe un registro por batch ejecutado, con
+la sentencia, el principal que la lanzó, la IP del cliente, la duración y las filas afectadas.
+
+**Está desactivado por defecto.** La categoría viaja dentro del `allLogs` del Diagnostic
+Setting desde siempre, pero sin la política de auditoría nunca se genera un solo registro: es
+un canal abierto sin nadie hablando al otro lado. Para activarlo, pon la variable de
+repositorio `ENABLE_SQL_AUDIT=true` y vuelve a desplegar.
+
+```bash
+# Comprobar en qué estado está
+az sql db audit-policy show -g rg-usersvc -s <servidor> -n sqldb-users -o table
+
+# Consultar la auditoría
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+SQLSecurityAuditEvents
+| project TimeGenerated, Statement, ServerPrincipalName, ClientIp, DurationMs, AffectedRows
+| order by TimeGenerated desc | take 50"
+```
+
+No usa storage account ni ningún recurso extra: la plantilla lo declara con
+`isAzureMonitorTargetEnabled`, así que los registros salen por los Diagnostic Settings que ya
+existen. Lo que sí cuesta es la ingesta, y es verbosa: con la cuota diaria de 1 GB del
+workspace se llega al tope rápido. Enciéndela para la demo y apágala después.
+
+#### Auditoría o logs de la aplicación: cuál usar
+
+Las dos ven las mismas consultas, pero no sirven para lo mismo.
+
+| | Vista de la aplicación (`org.hibernate.SQL` y spans) | Vista del motor (auditoría) |
+|---|---|---|
+| Quién lo emite | El proceso Java | El motor SQL |
+| Correlación con `trace.id` | Sí, automática | No, hay que cruzar por tiempo y sentencia |
+| Alcance | Solo lo que hace **tu** aplicación | **Todo** lo que entra en la base de datos, venga de donde venga |
+| Duración que mide | Total, incluyendo red y espera de pool | Real dentro del motor |
+| Coste | Cero extra | Ingesta, y bastante |
+
+Para depurar rendimiento y entender el flujo de una petición, la vista de la aplicación gana:
+ya viene enganchada a la traza, así que ves la consulta en su contexto. La auditoría responde
+a otra pregunta: quién tocó qué, y si algo está accediendo a la base de datos por fuera de tu
+servicio.
+
 ---
 
 ## 6. Azure Monitor y Log Analytics
@@ -605,6 +658,7 @@ Recorre esta lista en orden; está ordenada por probabilidad.
 | Llegan trazas pero **no logs** | El agente no está adjunto o Logback no está instrumentado | `az webapp log tail` y buscar los errores del agente al arrancar |
 | Llegan logs pero **no sentencias SQL** | `SQL_LOG_LEVEL` sigue en `INFO`, que es el valor por defecto | Ponerla en `DEBUG` y redesplegar. Ver [5.2](#52-logs-de-sql-hay-que-activarlos) |
 | No hay **logs de BD en Log Analytics** | Las consultas correctas no generan logs de plataforma; solo lo hacen los errores, timeouts, bloqueos y el Query Store cada 60 min | Mirar `AzureMetrics` en vez de `AzureDiagnostics`. Ver [5.3](#53-logs-de-plataforma-del-servicio-sql) |
+| La entidad de la BD en New Relic dice **"0 logs found"** | Lo mismo: sin errores no hay logs que reenviar. La auditoría, que sí registra cada sentencia, está apagada por defecto | `ENABLE_SQL_AUDIT=true` y redesplegar. Ver [5.4](#54-auditoría-el-log-por-sentencia-del-propio-motor) |
 | No hay **logs de BD en New Relic** | El Diagnostic Setting hacia New Relic tarda en crearse tras el despliegue | `az monitor diagnostic-settings list --resource <id de la BD>`. Ver [10.3](#103-cuánto-tarda-en-empezar-a-fluir) |
 | Los datos llegan **con retraso** | Normal: 1-2 min para trazas y logs, hasta 30 s de intervalo de exportación para métricas | Esperar y refrescar |
 | Un cambio de variable **no se refleja** | La aplicación no ha releído los settings | El pipeline reinicia la app y verifica los settings; revisar el paso *Verify the effective application settings* |
@@ -663,6 +717,7 @@ definen se usa el valor por defecto.
 | `LOG_DAILY_QUOTA_GB` | Tope diario de ingesta | `1` |
 | `ENABLE_LOG_ANALYTICS` | Enviar los Diagnostic Settings a Log Analytics. Ponlo a `false` cuando el servicio nativo de New Relic ya reenvíe los logs, para no ingerir el mismo dato dos veces | `true` |
 | `ENABLE_ACTIVITY_LOG_EXPORT` | Exportar el Activity Log de la suscripción | `false` |
+| `ENABLE_SQL_AUDIT` | Activa Azure SQL Auditing, el único log por sentencia que emite el motor. Verboso: enciéndelo solo mientras lo necesites | `false` |
 | `ENABLE_SCHEDULED_CLEANUP` | Activa la limpieza horaria programada | desactivada |
 | `POC_MAX_AGE_HOURS` | Edad máxima antes del borrado programado | `2` |
 
@@ -933,9 +988,12 @@ detecta más de uno en la suscripción.
 
 ### 10.3 Cuánto tarda en empezar a fluir
 
-La creación del Diagnostic Setting sobre un recurso nuevo **puede tardar hasta una hora**, y
-eso pasa en cada despliegue: cada `deploy` crea un servidor SQL y una base de datos con
-nombres nuevos. La comprobación es binaria:
+La creación del Diagnostic Setting sobre un recurso nuevo **puede tardar hasta una hora**. No
+pasa en cada `deploy`: los nombres se derivan de `uniqueString(resourceGroup().id)`, que es
+determinista, así que un redespliegue sobre el mismo resource group reutiliza el mismo servidor
+y la misma base de datos. El reloj vuelve a empezar cuando el recurso es realmente nuevo, es
+decir después de un `destroy`, o si cambias `POC_NAME_PREFIX`, el resource group o la
+suscripción. La comprobación es binaria:
 
 ```bash
 SQL_ID=$(az sql db show -g rg-usersvc -s <servidor> -n sqldb-users --query id -o tsv)

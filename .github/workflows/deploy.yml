@@ -44,6 +44,7 @@ env:
   LOG_DAILY_QUOTA_GB: ${{ vars.LOG_DAILY_QUOTA_GB || '1' }}
   ENABLE_ACTIVITY_LOG_EXPORT: ${{ vars.ENABLE_ACTIVITY_LOG_EXPORT || 'false' }}
   ENABLE_LOG_ANALYTICS: ${{ vars.ENABLE_LOG_ANALYTICS || 'true' }}
+  ENABLE_SQL_AUDIT: ${{ vars.ENABLE_SQL_AUDIT || 'true' }}
   SQL_LOG_LEVEL: ${{ vars.SQL_LOG_LEVEL || 'INFO' }}
   APP_SERVICE_SKU: ${{ vars.APP_SERVICE_SKU || 'B1' }}
   SQL_SKU_NAME: ${{ vars.SQL_SKU_NAME || 'Basic' }}
