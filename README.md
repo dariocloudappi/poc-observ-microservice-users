@@ -348,7 +348,8 @@ SELECT timestamp, http.method, http.target, http.status_code, http.duration_ms, 
 FROM Log WHERE service.name = 'microservice-users' AND http.duration_ms > 500
 SINCE 30 minutes ago LIMIT 50
 
--- Solo errores
+-- Solo errores. El nivel llega como severityText del protocolo OTel; si el
+-- atributo "level" no aparece en tus logs, filtra por severity.text
 SELECT timestamp, message, trace.id FROM Log
 WHERE service.name = 'microservice-users' AND level = 'ERROR'
 SINCE 30 minutes ago LIMIT 50
@@ -504,6 +505,56 @@ tráfico normal es:
 - Las **métricas** (`AzureMetrics`): DTU consumidas, conexiones, almacenamiento. Estas sí
   fluyen en minutos.
 
+Las **16 categorías** de log que publica `Microsoft.Sql/servers/databases` entran todas, porque
+`categoryGroup: 'allLogs'` las incluye por definición: `Errors`, `Timeouts`, `Blocks`,
+`Deadlocks`, `Waits`, `DatabaseWaitStatistics`, `QueryStoreRuntimeStatistics`,
+`QueryStoreWaitStatistics`, `SQLInsights`, `AutomaticTuning`, `DevOpsOperationsAudit`,
+`SQLSecurityAuditEvents`, `SqlRequests`, `ExecRequests`, `RequestSteps` y `DmsWorkers`. No hay
+ninguna que se quede fuera.
+
+En métricas se recogen **dos** de las tres categorías:
+
+| Categoría | Qué trae | Estado |
+|-----------|----------|--------|
+| `Basic` | DTU, almacenamiento, sesiones, workers, deadlocks, `availability` y los contadores de conexión (`connection_successful`, `connection_failed`, `blocked_by_firewall`) | Activa |
+| `InstanceAndAppAdvanced` | CPU y memoria del motor (`sql_instance_cpu_percent`, `sql_instance_memory_percent`) y uso de tempdb | Activa |
+| `WorkloadManagement` | Métricas `wlg_*` de grupos de carga | **Fuera a propósito**: solo aplica a data warehouses, no a una base de datos única |
+
+### 5.3.1 No existe un log de arranque de Azure SQL Database
+
+Esto es importante y conviene decirlo claro, porque se busca mucho y no está: **Azure SQL
+Database no expone el error log ni el log de arranque del motor.** Es PaaS, no hay sistema de
+ficheros al que asomarse, y `sp_readerrorlog` y `xp_readerrorlog` **no están soportados** (sí lo
+están en Managed Instance, que es otro producto). Tampoco hay un "arranque" de una base de datos
+única que se pueda leer: el servidor lógico es infraestructura gestionada y multitenant.
+
+Lo que sí tienes, y cubre en la práctica lo que se busca en un log de arranque:
+
+| Quieres saber | Dónde está |
+|---------------|------------|
+| Que la base de datos ha estado o no disponible | Métrica `availability` de la categoría `Basic`: por cada minuto vale 100 % si alguna conexión tuvo éxito y 0 % si todas fallaron |
+| Que hubo un failover, un escalado o una restauración | **Activity Log**, categorías `Administrative` y `ResourceHealth`. Es el equivalente de plataforma a "el motor se reinició" |
+| Errores del motor, que es lo que en on-premise iría al ERRORLOG | Categoría de log `Errors` |
+| Quién se conectó y quién no pudo | Métricas `connection_successful`, `connection_failed`, `connection_failed_user_error`, `blocked_by_firewall`, y con auditoría los grupos `*_DATABASE_AUTHENTICATION_GROUP` |
+| Que el esquema se creó al arrancar la aplicación | Auditoría: el `CREATE TABLE` de Hibernate es un batch más, y además queda como `SCHEMA_OBJECT_CHANGE_GROUP`. Ver [5.4](#54-auditoría-el-log-por-sentencia-del-propio-motor) |
+| El arranque de la aplicación y su conexión a la base de datos | Eso **no** es un log de SQL: son logs de la aplicación, van por Logback al agente OTel y a New Relic, y también a `AppServiceConsoleLogs` |
+
+```bash
+# Disponibilidad minuto a minuto: lo mas parecido a "ha estado arriba"
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+AzureMetrics
+| where ResourceProvider == 'MICROSOFT.SQL' and MetricName == 'availability'
+| project TimeGenerated, Average
+| order by TimeGenerated desc | take 60"
+
+# Eventos de plataforma: failover, escalado, cambios de estado
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+AzureActivity
+| where ResourceProvider == 'MICROSOFT.SQL'
+| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue
+| order by TimeGenerated desc | take 50"
+```
+
 Para ver el consumo de la base de datos con tráfico normal, mira las métricas, no los logs:
 
 ```bash
@@ -544,6 +595,22 @@ va a la categoría `SQLSecurityAuditEvents`, tabla del mismo nombre en Log Analy
 
 Con el grupo de acciones `BATCH_COMPLETED_GROUP` escribe un registro por batch ejecutado, con
 la sentencia, el principal que la lanzó, la IP del cliente, la duración y las filas afectadas.
+Ahí es donde aparece el `CREATE TABLE` que Hibernate ejecuta al arrancar con `ddl-auto: update`,
+así que es la vía para ver el esquema creándose desde el punto de vista del motor.
+
+Los grupos activados, y por qué cada uno:
+
+| Grupo | Qué registra | Volumen |
+|-------|--------------|---------|
+| `BATCH_COMPLETED_GROUP` | Cada batch de sentencias ejecutado | Alto: es el que hace que esto sea verboso |
+| `SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP` | Conexiones que entraron | Medio |
+| `FAILED_DATABASE_AUTHENTICATION_GROUP` | Intentos de conexión rechazados | Bajo, y es el que importa en seguridad |
+| `SCHEMA_OBJECT_CHANGE_GROUP` / `DATABASE_OBJECT_CHANGE_GROUP` | `CREATE`, `ALTER` y `DROP` de objetos, como registro explícito | Bajo |
+| `DATABASE_PRINCIPAL_CHANGE_GROUP` / `DATABASE_ROLE_MEMBER_CHANGE_GROUP` | Altas de usuarios y cambios de pertenencia a roles | Muy bajo |
+| `DATABASE_PERMISSION_CHANGE_GROUP` / `DATABASE_OBJECT_PERMISSION_CHANGE_GROUP` | Quién concedió o revocó qué permiso | Muy bajo |
+
+Todo el volumen viene de `BATCH_COMPLETED_GROUP`. Los demás son eventos raros y son justo los
+que interesan en una auditoría, así que si necesitas bajar la ingesta, quita ese y deja el resto.
 
 **Está desactivado por defecto.** La categoría viaja dentro del `allLogs` del Diagnostic
 Setting desde siempre, pero sin la política de auditoría nunca se genera un solo registro: es
@@ -983,8 +1050,16 @@ Y la variable `NR_REGION` (`eu` o `us`), que debe coincidir con la región de la
    `newrelicLogs=exclude`, porque el agente OTel ya manda esos logs y llegarían dos veces. Sus
    **métricas** de plataforma sí se recogen, que esas el agente no las ve.
 
-El monitor se despliega **solo desde `poc-microservice-users`**, y el workflow aborta si
-detecta más de uno en la suscripción.
+> **Se ejecuta una sola vez por suscripción, no una por repositorio.** Este workflow y sus tres
+> ficheros Bicep son **idénticos** en `poc-microservice-users` y en `poc-microservice-orders`, y
+> los dos apuntan al mismo resource group y al mismo nombre de monitor, así que da igual desde
+> cuál lo lances: el segundo lanzamiento simplemente reaplica el mismo recurso. El monitor cubre
+> **toda la suscripción** por reglas de etiquetas, de modo que los recursos de los dos
+> microservicios quedan cubiertos con uno solo.
+>
+> Lo que **no** debes hacer es cambiarle el nombre por repositorio: tendrías dos monitores
+> vinculados a la misma organización y cada log llegaría dos veces. El workflow aborta si
+> detecta más de un monitor, y también si ya existe uno con un nombre distinto al que le pides.
 
 ### 10.3 Cuánto tarda en empezar a fluir
 

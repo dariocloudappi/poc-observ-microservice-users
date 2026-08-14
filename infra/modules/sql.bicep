@@ -114,8 +114,17 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
     ]
     metrics: [
       {
-        // Basic is the only metric category exposed by Azure SQL databases.
+        // DTU, storage, sessions, workers, deadlocks, availability and the
+        // connection counters (successful, failed, blocked by firewall).
         category: 'Basic'
+        enabled: true
+      }
+      {
+        // Engine level counters that Basic does not carry: cpu and memory of
+        // the SQL instance and tempdb usage. WorkloadManagement is the third
+        // category and is deliberately left out: its wlg_* metrics only apply
+        // to data warehouses, not to a single database.
+        category: 'InstanceAndAppAdvanced'
         enabled: true
       }
     ]
@@ -143,10 +152,23 @@ resource databaseAuditing 'Microsoft.Sql/servers/databases/auditingSettings@2023
     state: 'Enabled'
     isAzureMonitorTargetEnabled: true
     auditActionsAndGroups: [
-      // One record per statement batch executed against the database.
+      // One record per statement batch executed against the database. This is
+      // what makes the schema creation at start up visible, because the DDL the
+      // application runs on boot is just another batch.
       'BATCH_COMPLETED_GROUP'
+      // Connections: who reached the database and who failed to.
       'SUCCESSFUL_DATABASE_AUTHENTICATION_GROUP'
       'FAILED_DATABASE_AUTHENTICATION_GROUP'
+      // Explicit records for structural changes. Low volume, and they answer
+      // "who altered this table" without digging through every batch.
+      'SCHEMA_OBJECT_CHANGE_GROUP'
+      'DATABASE_OBJECT_CHANGE_GROUP'
+      // Who created a user or a role, and who granted what. Rare events, and
+      // the ones that matter most in an audit.
+      'DATABASE_PRINCIPAL_CHANGE_GROUP'
+      'DATABASE_ROLE_MEMBER_CHANGE_GROUP'
+      'DATABASE_PERMISSION_CHANGE_GROUP'
+      'DATABASE_OBJECT_PERMISSION_CHANGE_GROUP'
     ]
   }
 }

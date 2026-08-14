@@ -33,7 +33,7 @@ param logRetentionDays = int(readEnvironmentVariable('LOG_RETENTION_DAYS', '30')
 param logDailyQuotaGb = int(readEnvironmentVariable('LOG_DAILY_QUOTA_GB', '1'))
 param enableLogAnalytics = bool(readEnvironmentVariable('ENABLE_LOG_ANALYTICS', 'true'))
 param enableActivityLogExport = bool(readEnvironmentVariable('ENABLE_ACTIVITY_LOG_EXPORT', 'false'))
-param enableSqlAudit = bool(readEnvironmentVariable('ENABLE_SQL_AUDIT', 'false'))
+param enableSqlAudit = bool(readEnvironmentVariable('ENABLE_SQL_AUDIT', 'true'))
 
 param appServiceSku = readEnvironmentVariable('APP_SERVICE_SKU', 'B1')
 param javaOpts = readEnvironmentVariable('JAVA_OPTS', '-Xmx512m')
