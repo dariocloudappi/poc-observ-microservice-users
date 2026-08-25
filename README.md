@@ -1451,12 +1451,19 @@ az provider show --namespace NewRelic.Observability   --query "resourceTypes[?re
 
 > **Ya no hay que lanzarlo a mano.** El job `newrelic-monitor` de `deploy.yml` lo invoca como
 > workflow reutilizable en **cada despliegue**, porque dejarlo como un paso manual significaba que
-> si nadie lo ejecutaba los logos de base de datos no llegaban nunca a New Relic, y sin ningún
-> error visible. El despliegue es idempotente, así que repetirlo solo reaplica las tag rules.
+> si nadie lo ejecutaba los logs de base de datos no llegaban nunca a New Relic, y sin ningún
+> error visible.
 >
-> El job va con `continue-on-error`: si faltan los secrets de New Relic sale en rojo pero **no**
-> tumba el despliegue de la aplicación. Sigue existiendo el `workflow_dispatch` para lanzarlo
-> suelto.
+> **Y si el monitor ya existe, no lo toca.** Reaplicar el recurso **no es idempotente**: un PUT
+> sobre un monitor ya vinculado falla con `ResourceCreationValidateFailed: An internal server
+> error occurred`, porque el payload de vinculación de la cuenta no se puede reenviar. El workflow
+> comprueba antes y, si está, se limita a informar. Para cambiar las tag rules hay que lanzarlo a
+> mano con `force_redeploy=true`, sabiendo que puede fallar por el mismo motivo; si falla, la vía
+> es editar las reglas en el portal o borrar y recrear el monitor.
+>
+> Si faltan los secrets de New Relic el workflow **avisa y no hace nada** en lugar de fallar, así
+> que no tumba el despliegue de la aplicación. Sigue existiendo el `workflow_dispatch` para
+> lanzarlo suelto.
 >
 > **Se aplica una sola vez por suscripción, no una por repositorio.** Este workflow y sus tres
 > ficheros Bicep son **idénticos** en `poc-microservice-users` y en `poc-microservice-orders`, y
