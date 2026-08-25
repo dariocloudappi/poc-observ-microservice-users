@@ -131,22 +131,53 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
+// DEDICATED diagnostic setting for the audit category, and it is not optional.
+//
+// Microsoft documents that when auditing targets Azure Monitor, "an additional
+// diagnostic settings resource named SQLSecurityAuditEvents_XXXX-XXXX-XXX is
+// created, which is critical for the proper functioning of auditing", and that
+// "if the diagnostic settings are deleted [...] the auditing functionality will
+// fail silently, and audit logs won't be sent to the target location".
+//
+// The portal and the PowerShell cmdlets create it for you. Bicep does not, so
+// it has to be declared here. A categoryGroup of allLogs is NOT a substitute:
+// what the audit pipeline binds to is a setting with the SQLSecurityAuditEvents
+// category enabled EXPLICITLY. Without this resource the audit policy below is
+// reported as Enabled and never emits a single record.
+//
+// It is gated on enableSqlAudit and not on enableLogAnalytics on purpose: this
+// is the transport of the audit trail, not an optional extra sink, so turning
+// Log Analytics off must not silently break auditing again. The workspace is
+// created either way.
+resource databaseAuditDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableSqlAudit) {
+  name: 'SQLSecurityAuditEvents-${databaseName}'
+  scope: database
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'SQLSecurityAuditEvents'
+        enabled: true
+      }
+    ]
+  }
+}
+
 // The only per statement log Azure SQL emits. It is written by the engine, not
 // by the application, so it also catches whatever connects to the database from
 // outside this service.
 //
 // isAzureMonitorTargetEnabled routes the records to the diagnostic settings
 // instead of to a storage account, which is what keeps this free of extra
-// resources. The category SQLSecurityAuditEvents already travels inside the
-// allLogs group above, but it stays silent until this policy exists.
+// resources.
 //
-// It depends on the diagnostic setting on purpose: with Azure Monitor as the
-// target, the destination has to be in place before auditing is turned on.
+// It depends on the audit diagnostic setting on purpose: with Azure Monitor as
+// the target, the destination has to be in place before auditing is turned on.
 resource databaseAuditing 'Microsoft.Sql/servers/databases/auditingSettings@2023-08-01-preview' = if (enableSqlAudit) {
   parent: database
   name: 'default'
   dependsOn: [
-    databaseDiagnostics
+    databaseAuditDiagnostics
   ]
   properties: {
     state: 'Enabled'

@@ -629,9 +629,57 @@ SQLSecurityAuditEvents
 ```
 
 No usa storage account ni ningún recurso extra: la plantilla lo declara con
-`isAzureMonitorTargetEnabled`, así que los registros salen por los Diagnostic Settings que ya
-existen. Lo que sí cuesta es la ingesta, y es verbosa: con la cuota diaria de 1 GB del
-workspace se llega al tope rápido. Enciéndela para la demo y apágala después.
+`isAzureMonitorTargetEnabled`. Lo que sí cuesta es la ingesta, y es verbosa: con la cuota diaria
+de 1 GB del workspace se llega al tope rápido. Enciéndela para la demo y apágala después.
+
+#### La auditoría necesita SU PROPIO Diagnostic Setting, o falla en silencio
+
+Esto costó un incidente, así que queda escrito. Activar la política de auditoría **no basta**.
+La documentación de Microsoft lo dice de forma explícita:
+
+> *"When auditing is configured with Azure external monitors (for example, Event Hubs or Log
+> Analytics) as the target, an additional diagnostic settings resource named
+> `SQLSecurityAuditEvents_XXXX-XXXX-XXX` is created, which is critical for the proper functioning
+> of auditing."*
+>
+> *"If the diagnostic settings are deleted, either intentionally or unintentionally, the auditing
+> functionality will fail silently, and audit logs won't be sent to the target location."*
+
+El portal y los cmdlets de PowerShell crean ese Diagnostic Setting por ti. **Bicep no**, así que
+hay que declararlo, y es lo que hace el recurso `databaseAuditDiagnostics` de
+[`infra/modules/sql.bicep`](infra/modules/sql.bicep).
+
+Y el detalle que provocó el fallo: **un `categoryGroup: 'allLogs'` no sirve de sustituto.** Lo
+que engancha el pipeline de auditoría es un setting con la categoría `SQLSecurityAuditEvents`
+habilitada **explícitamente**. Con solo `allLogs`, `az sql db audit-policy show` responde
+`state: Enabled`, el despliegue termina en verde y no se emite ni un registro. Falla en silencio,
+literalmente como advierte la documentación.
+
+Por eso hay ahora **dos** Diagnostic Settings sobre la base de datos, y son distintos a propósito:
+
+| Setting | Contenido | Condicionado a |
+|---------|-----------|----------------|
+| `diag-<bd>` | `allLogs` + métricas `Basic` e `InstanceAndAppAdvanced` | `ENABLE_LOG_ANALYTICS` |
+| `SQLSecurityAuditEvents-<bd>` | Solo la categoría `SQLSecurityAuditEvents` | `ENABLE_SQL_AUDIT` |
+
+El segundo depende de `ENABLE_SQL_AUDIT` y **no** de `ENABLE_LOG_ANALYTICS`, a propósito: es el
+transporte del rastro de auditoría, no un destino opcional, así que apagar Log Analytics no puede
+volver a romper la auditoría sin avisar.
+
+Comprueba que los dos existen. Si solo aparece uno, la auditoría no está emitiendo:
+
+```bash
+DB_ID=$(az sql db show -g rg-usersvc -s <servidor> -n sqldb-users --query id -o tsv)
+az monitor diagnostic-settings list --resource "$DB_ID"   --query "value[].{name:name, categorias:logs[?enabled].category, grupos:logs[?enabled].categoryGroup}" -o json
+
+# Y que la politica esta activa con Azure Monitor como destino
+az sql db audit-policy show -g rg-usersvc -s <servidor> -n sqldb-users   --query "{state:state, azureMonitor:isAzureMonitorTargetEnabled}" -o json
+```
+
+> **Aviso operativo de la propia documentación:** si alguien borra ese Diagnostic Setting, la
+> auditoría deja de emitir sin ningún error. Microsoft recomienda crear una alerta sobre el
+> borrado de diagnostic settings. En este PoC el redespliegue lo recrea, pero en un entorno real
+> conviene la alerta.
 
 #### Auditoría o logs de la aplicación: cuál usar
 
@@ -725,7 +773,8 @@ Recorre esta lista en orden; está ordenada por probabilidad.
 | Llegan trazas pero **no logs** | El agente no está adjunto o Logback no está instrumentado | `az webapp log tail` y buscar los errores del agente al arrancar |
 | Llegan logs pero **no sentencias SQL** | `SQL_LOG_LEVEL` sigue en `INFO`, que es el valor por defecto | Ponerla en `DEBUG` y redesplegar. Ver [5.2](#52-logs-de-sql-hay-que-activarlos) |
 | No hay **logs de BD en Log Analytics** | Las consultas correctas no generan logs de plataforma; solo lo hacen los errores, timeouts, bloqueos y el Query Store cada 60 min | Mirar `AzureMetrics` en vez de `AzureDiagnostics`. Ver [5.3](#53-logs-de-plataforma-del-servicio-sql) |
-| La entidad de la BD en New Relic dice **"0 logs found"** | Lo mismo: sin errores no hay logs que reenviar. La auditoría, que sí registra cada sentencia, está apagada por defecto | `ENABLE_SQL_AUDIT=true` y redesplegar. Ver [5.4](#54-auditoría-el-log-por-sentencia-del-propio-motor) |
+| La entidad de la BD en New Relic dice **"0 logs found"** | Sin errores no hay logs de plataforma que reenviar, y la auditoría está apagada por defecto | `ENABLE_SQL_AUDIT=true` y redesplegar. Ver [5.4](#54-auditoría-el-log-por-sentencia-del-propio-motor) |
+| **`ENABLE_SQL_AUDIT=true` y aun así no llega nada.** `audit-policy show` dice `Enabled` | Falta el Diagnostic Setting dedicado con la categoría `SQLSecurityAuditEvents` explícita. Un `categoryGroup: allLogs` **no** sirve, y la auditoría falla en silencio: despliegue en verde, política activa, cero registros | Comprobar que existen **dos** settings sobre la base de datos con `az monitor diagnostic-settings list`. Ver [5.4](#la-auditoría-necesita-su-propio-diagnostic-setting-o-falla-en-silencio) |
 | No hay **logs de BD en New Relic** | El Diagnostic Setting hacia New Relic tarda en crearse tras el despliegue | `az monitor diagnostic-settings list --resource <id de la BD>`. Ver [10.3](#103-cuánto-tarda-en-empezar-a-fluir) |
 | Los datos llegan **con retraso** | Normal: 1-2 min para trazas y logs, hasta 30 s de intervalo de exportación para métricas | Esperar y refrescar |
 | Un cambio de variable **no se refleja** | La aplicación no ha releído los settings | El pipeline reinicia la app y verifica los settings; revisar el paso *Verify the effective application settings* |
