@@ -349,11 +349,15 @@ SELECT timestamp, http.method, http.target, http.status_code, http.duration_ms, 
 FROM Log WHERE service.name = 'microservice-users' AND http.duration_ms > 500
 SINCE 30 minutes ago LIMIT 50
 
--- Solo errores. El nivel llega como severityText del protocolo OTel; si el
--- atributo "level" no aparece en tus logs, filtra por severity.text
+-- Solo errores. El atributo "level" existe porque LevelMdcTurboFilter lo mete
+-- en el MDC y el agente exporta el MDC como atributos del log
 SELECT timestamp, message, trace.id FROM Log
 WHERE service.name = 'microservice-users' AND level = 'ERROR'
 SINCE 30 minutes ago LIMIT 50
+
+-- Reparto por nivel: DEBUG, INFO, WARN, ERROR
+SELECT count(*) FROM Log
+WHERE service.name = 'microservice-users' SINCE 30 minutes ago FACET level TIMESERIES
 
 -- Respuestas 5xx agrupadas por endpoint
 SELECT count(*) FROM Log
@@ -821,6 +825,44 @@ sentencias **ejecutadas**. Genera tráfico contra la API antes de mirar.
 > borrado de diagnostic settings. En este PoC el redespliegue lo recrea, pero en un entorno real
 > esa alerta es lo que evita descubrirlo cuando alguien pide una auditoría.
 
+#### Y por qué pueden estar en Log Analytics pero no en New Relic
+
+Son **dos condiciones independientes** y hay que separarlas antes de tocar nada:
+
+| Condición | Qué la cumple | Cómo se comprueba |
+|-----------|---------------|-------------------|
+| **1. Que la auditoría genere registros** | La política de auditoría activa (`ENABLE_SQL_AUDIT`) | La tabla `SQLSecurityAuditEvents` del workspace tiene filas |
+| **2. Que Azure los reenvíe a New Relic** | El **servicio nativo** de New Relic, que crea un Diagnostic Setting hacia New Relic sobre la base de datos | `az monitor diagnostic-settings list` muestra una entrada apuntando a New Relic |
+
+Si la 1 se cumple y la 2 no, verás los logs en Log Analytics y **nunca** en New Relic, por muchas
+consultas que hagas. La base de datos no tiene agente: sus logs solo pueden llegar a New Relic por
+esa vía.
+
+**El caso que más despista:** la integración **por polling** (`newrelic-azure-integration`) trae
+**solo métricas, ningún log**. Con ella la entidad de la base de datos aparece en New Relic, con
+sus pestañas de métricas, y la de *Logs* dice para siempre *"We can't find any logs from this
+host"*. Es exactamente el síntoma de tener polling y no tener el servicio nativo.
+
+```bash
+# Existe el monitor nativo en la suscripcion? Si esto sale vacio,
+# NINGUN log de Azure Monitor llega a New Relic.
+az resource list --resource-type "NewRelic.Observability/monitors" -o table
+
+# Y sobre la base de datos, hay un setting que apunte a New Relic?
+DB_ID=$(az sql db show -g rg-usersvc -s <servidor> -n sqldb-users --query id -o tsv)
+az monitor diagnostic-settings list --resource "$DB_ID"   --query "value[].{name:name, workspace:workspaceId, newRelic:marketplacePartnerId}" -o json
+```
+
+Si el monitor no existe, el motivo casi seguro es que faltan los secrets `NR_ACCOUNT_ID`,
+`NR_ORGANIZATION_ID` y `NR_USER_EMAIL`: **el pipeline ya intenta crearlo en cada despliegue**, en
+el job `Ensure the New Relic native integration`. Ese job es `continue-on-error`, así que sale en
+rojo sin tumbar el despliegue de la aplicación. Mira su log: dirá exactamente qué secret falta.
+
+Una vez creado, recuerda que el Diagnostic Setting sobre un recurso puede tardar **hasta una
+hora** en aparecer.
+
+Mientras tanto, los logs sí están en Log Analytics y se consultan con la KQL de arriba.
+
 #### Auditoría o logs de la aplicación: cuál usar
 
 Las dos ven las mismas consultas, pero no sirven para lo mismo.
@@ -1239,7 +1281,16 @@ Y la variable `NR_REGION` (`eu` o `us`), que debe coincidir con la región de la
    `newrelicLogs=exclude`, porque el agente OTel ya manda esos logs y llegarían dos veces. Sus
    **métricas** de plataforma sí se recogen, que esas el agente no las ve.
 
-> **Se ejecuta una sola vez por suscripción, no una por repositorio.** Este workflow y sus tres
+> **Ya no hay que lanzarlo a mano.** El job `newrelic-monitor` de `deploy.yml` lo invoca como
+> workflow reutilizable en **cada despliegue**, porque dejarlo como un paso manual significaba que
+> si nadie lo ejecutaba los logos de base de datos no llegaban nunca a New Relic, y sin ningún
+> error visible. El despliegue es idempotente, así que repetirlo solo reaplica las tag rules.
+>
+> El job va con `continue-on-error`: si faltan los secrets de New Relic sale en rojo pero **no**
+> tumba el despliegue de la aplicación. Sigue existiendo el `workflow_dispatch` para lanzarlo
+> suelto.
+>
+> **Se aplica una sola vez por suscripción, no una por repositorio.** Este workflow y sus tres
 > ficheros Bicep son **idénticos** en `poc-microservice-users` y en `poc-microservice-orders`, y
 > los dos apuntan al mismo resource group y al mismo nombre de monitor, así que da igual desde
 > cuál lo lances: el segundo lanzamiento simplemente reaplica el mismo recurso. El monitor cubre

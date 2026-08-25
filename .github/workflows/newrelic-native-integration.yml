@@ -49,6 +49,33 @@ on:
         required: false
         default: 'rg-newrelic-shared'
 
+  # Reusable, so deploy.yml can guarantee the monitor exists on every run
+  # instead of depending on somebody having launched this workflow by hand once.
+  # The deployment is idempotent: same resource group and same monitor name, so
+  # calling it again just reapplies the tag rules.
+  workflow_call:
+    inputs:
+      send_metrics:
+        type: string
+        required: false
+        default: 'true'
+      send_resource_logs:
+        type: string
+        required: false
+        default: 'true'
+      send_activity_logs:
+        type: string
+        required: false
+        default: 'true'
+      monitor_name:
+        type: string
+        required: false
+        default: 'newrelic-poc-observability'
+      resource_group:
+        type: string
+        required: false
+        default: 'rg-newrelic-shared'
+
 permissions:
   id-token: write
   contents: read

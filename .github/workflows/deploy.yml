@@ -57,6 +57,29 @@ env:
 
 jobs:
 
+  # ---------------------------------------------------------------------------
+  # La integracion nativa de New Relic, garantizada en cada despliegue
+  # ---------------------------------------------------------------------------
+  # Sin este recurso NINGUN log de Azure Monitor llega a New Relic: la base de
+  # datos no tiene agente, asi que sus logs de plataforma y su auditoria solo
+  # pueden llegar por aqui. Dejarlo como un workflow manual "de una sola vez"
+  # significaba que si nadie lo lanzaba, los logs de base de datos no aparecian
+  # nunca y sin ningun error visible.
+  #
+  # Es idempotente: mismo resource group y mismo nombre de monitor, asi que
+  # ejecutarlo en cada despliegue solo reaplica las tag rules. El recurso vive
+  # en rg-newrelic-shared y sobrevive al destroy del PoC.
+  #
+  # continue-on-error a proposito: es infraestructura compartida y opcional. Si
+  # faltan los secrets NR_ACCOUNT_ID / NR_ORGANIZATION_ID / NR_USER_EMAIL, este
+  # job sale en rojo con el mensaje de que falta configurarlos, pero NO tumba el
+  # despliegue de la aplicacion.
+  newrelic-monitor:
+    name: Ensure the New Relic native integration
+    uses: ./.github/workflows/newrelic-native-integration.yml
+    secrets: inherit
+    continue-on-error: true
+
   deploy:
     name: Build and deploy
     runs-on: ubuntu-latest
