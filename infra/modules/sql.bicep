@@ -101,7 +101,13 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
 }
 
 // Azure Monitor: query performance, errors, timeouts, deadlocks and blocks.
-resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableLogAnalytics) {
+//
+// The condition includes enableSqlAudit on purpose. This setting is also the
+// sink of the audit trail, because allLogs carries SQLSecurityAuditEvents, so
+// turning Log Analytics off while auditing is on would leave the audit with no
+// destination and it would fail silently, which is exactly the failure mode the
+// Azure documentation warns about.
+resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableLogAnalytics || enableSqlAudit) {
   name: 'diag-${databaseName}'
   scope: database
   properties: {
@@ -131,38 +137,6 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
-// DEDICATED diagnostic setting for the audit category, and it is not optional.
-//
-// Microsoft documents that when auditing targets Azure Monitor, "an additional
-// diagnostic settings resource named SQLSecurityAuditEvents_XXXX-XXXX-XXX is
-// created, which is critical for the proper functioning of auditing", and that
-// "if the diagnostic settings are deleted [...] the auditing functionality will
-// fail silently, and audit logs won't be sent to the target location".
-//
-// The portal and the PowerShell cmdlets create it for you. Bicep does not, so
-// it has to be declared here. A categoryGroup of allLogs is NOT a substitute:
-// what the audit pipeline binds to is a setting with the SQLSecurityAuditEvents
-// category enabled EXPLICITLY. Without this resource the audit policy below is
-// reported as Enabled and never emits a single record.
-//
-// It is gated on enableSqlAudit and not on enableLogAnalytics on purpose: this
-// is the transport of the audit trail, not an optional extra sink, so turning
-// Log Analytics off must not silently break auditing again. The workspace is
-// created either way.
-resource databaseAuditDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableSqlAudit) {
-  name: 'SQLSecurityAuditEvents-${databaseName}'
-  scope: database
-  properties: {
-    workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      {
-        category: 'SQLSecurityAuditEvents'
-        enabled: true
-      }
-    ]
-  }
-}
-
 // The only per statement log Azure SQL emits. It is written by the engine, not
 // by the application, so it also catches whatever connects to the database from
 // outside this service.
@@ -171,13 +145,18 @@ resource databaseAuditDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05
 // instead of to a storage account, which is what keeps this free of extra
 // resources.
 //
-// It depends on the audit diagnostic setting on purpose: with Azure Monitor as
-// the target, the destination has to be in place before auditing is turned on.
+// It depends on the diagnostic setting on purpose: with Azure Monitor as the
+// target, the destination has to be in place before auditing is turned on.
+// A single setting with categoryGroup allLogs already carries the
+// SQLSecurityAuditEvents category: Azure itself proves it, because declaring a
+// second setting with that category towards the same workspace is rejected with
+// "Data sinks can't be reused in different settings on the same category for the
+// same resource".
 resource databaseAuditing 'Microsoft.Sql/servers/databases/auditingSettings@2023-08-01-preview' = if (enableSqlAudit) {
   parent: database
   name: 'default'
   dependsOn: [
-    databaseAuditDiagnostics
+    databaseDiagnostics
   ]
   properties: {
     state: 'Enabled'

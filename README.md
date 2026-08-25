@@ -113,6 +113,7 @@ AUTH="-u $BASIC_AUTH_USER:$BASIC_AUTH_PASSWORD"
 | `GET` | `/actuator/metrics` | pública | `200` con la lista de métricas de Micrometer |
 | `GET` | `/actuator/prometheus` | pública | `200` con las métricas en formato Prometheus |
 | `GET` | `/status` | Basic Auth | `200` si la base de datos responde, `503` si no |
+| `GET` | `/get` | Basic Auth | `200` con la respuesta de `httpbin.org/get`. Endpoint de demostración de instrumentación de salida, ver [4.7](#47-instrumentación-de-una-llamada-http-saliente-el-endpoint-get) |
 | `GET` | `/users` | Basic Auth | `200` con la lista de usuarios |
 | `GET` | `/users/{id}` | Basic Auth | `200` con el usuario, `404` si no existe |
 | `POST` | `/users` | Basic Auth | `201` con el id creado, `409` si el email ya existe |
@@ -403,6 +404,122 @@ endpoint OTLP:
 Con `observability_enabled=false` en el despliegue, el agente sigue adjunto pero se
 autodesactiva (`OTEL_JAVAAGENT_ENABLED=false`) y los tres exporters pasan a `none`.
 
+### 4.6 Toda respuesta lleva `http.status_code`, incluidos los 401
+
+Esto era un bug y merece explicación, porque es la clase de error que se repite.
+
+`RequestLoggingFilter` estaba anotado con `@Order(1)`. La cadena de filtros de Spring Security se
+registra con orden **`-100`**, que es más prioritario. Consecuencia: Security se ejecutaba
+**antes**, respondía `401` y **nunca invocaba** el filtro de logging. Las peticiones rechazadas
+no dejaban ni línea de log ni atributo `http.status_code`, así que en New Relic un ataque de
+fuerza bruta contra la API era literalmente invisible.
+
+Ahora el filtro va con `@Order(Ordered.HIGHEST_PRECEDENCE)`, envolviendo toda la cadena. Con eso,
+**toda** respuesta queda registrada con su código, venga de un controlador o de Security.
+
+```bash
+# Un 401 sin credenciales y un 404 con ellas
+curl -s -o /dev/null "$URL/users"
+curl -s -o /dev/null $AUTH "$URL/users/00000000-0000-0000-0000-000000000000"
+```
+
+```sql
+-- Antes esta consulta no devolvia ni un 401. Ahora si
+SELECT count(*) FROM Log
+WHERE service.name = 'microservice-users' AND http.status_code IS NOT NULL
+SINCE 30 minutes ago FACET http.status_code
+
+-- Intentos de autenticacion fallidos, por IP de origen
+SELECT count(*) FROM Log
+WHERE service.name = 'microservice-users' AND http.status_code = 401
+SINCE 1 hour ago FACET http.client_ip
+```
+
+El mismo fallo estaba en `microservice-orders` y también está corregido allí.
+
+### 4.7 Instrumentación de una llamada HTTP saliente: el endpoint `/get`
+
+`GET /get` hace una llamada HTTP a `httpbin.org/get` y devuelve su respuesta tal cual. Existe
+solo para ver cómo se instrumenta una dependencia de salida, y `httpbin` es útil porque
+**devuelve en el cuerpo las cabeceras que ha recibido**: es la forma directa de comprobar qué se
+envía de verdad.
+
+```bash
+curl -s $AUTH "$URL/get" | jq
+```
+
+En la respuesta verás dos cosas que nadie ha programado:
+
+```json
+{ "data": { "headers": {
+    "Traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "X-Poc-Source": "microservice-users",
+    "User-Agent": "Java/17"
+} } }
+```
+
+La cabecera **`Traceparent`** la inyecta el agente OpenTelemetry en la petición saliente sin una
+línea de código. Es el mecanismo exacto por el que las trazas cruzan de un servicio a otro.
+
+En la traza aparecen **dos spans**: el de servidor de `/get` y, colgando de él, el de cliente de
+la llamada a httpbin, con su propia duración. Ahí se ve cuánto del tiempo total se fue esperando
+a un tercero.
+
+#### Cómo identificar las llamadas salientes
+
+| Atributo | Valor | Quién lo pone |
+|----------|-------|---------------|
+| `span.kind` | `client` | El agente |
+| `peer.service` | `httpbin` | `OutboundHttpLoggingInterceptor` |
+| `http.client.dependency` | `httpbin` | El interceptor, en el span y en el log |
+| `url.full`, `server.address` | La url y el host | El agente y el interceptor |
+| `http.request.header.traceparent` | El contexto propagado | El agente, vía `OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_REQUEST_HEADERS` |
+
+```sql
+-- Todas las llamadas salientes del servicio, por dependencia
+SELECT count(*), average(duration.ms), percentile(duration.ms, 95) FROM Span
+WHERE service.name = 'microservice-users' AND span.kind = 'client'
+SINCE 30 minutes ago FACET peer.service, name
+
+-- Solo las llamadas a httpbin, con lo que se envio y lo que volvio
+SELECT timestamp, url.full, http.status_code, http.client.duration_ms,
+       http.request.headers, http.response.body FROM Log
+WHERE service.name = 'microservice-users' AND http.client.dependency = 'httpbin'
+SINCE 30 minutes ago LIMIT 50
+
+-- Cabeceras capturadas en el span de cliente
+SELECT url.full, http.request.header.traceparent, http.request.header.x_poc_source FROM Span
+WHERE service.name = 'microservice-users' AND span.kind = 'client'
+SINCE 30 minutes ago LIMIT 20
+```
+
+#### Cabeceras sí, cuerpos no: quién captura qué
+
+Esta distinción importa y no es evidente:
+
+| Dato | Lo captura | Cómo |
+|------|-----------|------|
+| Método, url, host, código de respuesta, duración | **El agente**, sin configuración | Convenciones HTTP de OTel |
+| Cabeceras seleccionadas | **El agente**, si se lo pides | `OTEL_INSTRUMENTATION_HTTP_{CLIENT,SERVER}_CAPTURE_{REQUEST,RESPONSE}_HEADERS`, con la lista de nombres |
+| **Cuerpo de la petición y de la respuesta** | **La aplicación** | `OutboundHttpLoggingInterceptor`. **El agente no captura cuerpos y no hay ninguna variable que lo active**: no forma parte de las convenciones HTTP de OTel |
+
+Las listas de cabeceras están en [appservice.bicep](infra/modules/appservice.bicep) y en
+[`.env.example`](.env.example). **`authorization` no está en ninguna, a propósito.**
+`traceparent` sí, justo para poder ver la propagación.
+
+Dos detalles de implementación que conviene conocer si tocas esto:
+
+- El interceptor necesita **`BufferingClientHttpRequestFactory`**
+  ([HttpClientConfig.java](src/main/java/com/example/microserviceusersapplication/config/HttpClientConfig.java)).
+  Sin ella, leer el cuerpo de la respuesta para registrarlo consume el stream y el controlador
+  recibe un cuerpo vacío.
+- Los cuerpos se recortan a 2000 caracteres. New Relic descarta atributos de más de 4095, así que
+  un payload grande sin recortar se perdería entero en silencio.
+
+> **Aviso de datos personales.** El cuerpo de una petición puede contener PII. Contra
+> `httpbin.org` es inocuo, pero si reutilizas este interceptor contra un servicio real, filtra
+> los campos o desactiva el registro del cuerpo.
+
 ---
 
 ## 5. Telemetría de base de datos
@@ -632,10 +749,13 @@ No usa storage account ni ningún recurso extra: la plantilla lo declara con
 `isAzureMonitorTargetEnabled`. Lo que sí cuesta es la ingesta, y es verbosa: con la cuota diaria
 de 1 GB del workspace se llega al tope rápido. Enciéndela para la demo y apágala después.
 
-#### La auditoría necesita SU PROPIO Diagnostic Setting, o falla en silencio
+#### El destino de la auditoría: un solo Diagnostic Setting, y no puede faltar
 
-Esto costó un incidente, así que queda escrito. Activar la política de auditoría **no basta**.
-La documentación de Microsoft lo dice de forma explícita:
+Aquí hay un detalle que cuesta un despliegue fallido si se toca mal, así que queda escrito.
+
+La política de auditoría con `isAzureMonitorTargetEnabled` **no lleva los registros a ningún
+sitio por sí sola**: los emite al canal de diagnóstico, y hace falta un Diagnostic Setting con la
+categoría `SQLSecurityAuditEvents` que los recoja. La documentación de Microsoft lo dice así:
 
 > *"When auditing is configured with Azure external monitors (for example, Event Hubs or Log
 > Analytics) as the target, an additional diagnostic settings resource named
@@ -645,41 +765,61 @@ La documentación de Microsoft lo dice de forma explícita:
 > *"If the diagnostic settings are deleted, either intentionally or unintentionally, the auditing
 > functionality will fail silently, and audit logs won't be sent to the target location."*
 
-El portal y los cmdlets de PowerShell crean ese Diagnostic Setting por ti. **Bicep no**, así que
-hay que declararlo, y es lo que hace el recurso `databaseAuditDiagnostics` de
-[`infra/modules/sql.bicep`](infra/modules/sql.bicep).
+Eso es lo que hacen el portal y los cmdlets de PowerShell: crean un setting **dedicado**. Desde
+Bicep **no hace falta crear uno aparte**, y de hecho **no se puede**: el `categoryGroup: 'allLogs'`
+de `diag-<bd>` ya incluye la categoría `SQLSecurityAuditEvents`, y Azure rechaza un segundo
+setting que apunte al mismo workspace para la misma categoría:
 
-Y el detalle que provocó el fallo: **un `categoryGroup: 'allLogs'` no sirve de sustituto.** Lo
-que engancha el pipeline de auditoría es un setting con la categoría `SQLSecurityAuditEvents`
-habilitada **explícitamente**. Con solo `allLogs`, `az sql db audit-policy show` responde
-`state: Enabled`, el despliegue termina en verde y no se emite ni un registro. Falla en silencio,
-literalmente como advierte la documentación.
-
-Por eso hay ahora **dos** Diagnostic Settings sobre la base de datos, y son distintos a propósito:
-
-| Setting | Contenido | Condicionado a |
-|---------|-----------|----------------|
-| `diag-<bd>` | `allLogs` + métricas `Basic` e `InstanceAndAppAdvanced` | `ENABLE_LOG_ANALYTICS` |
-| `SQLSecurityAuditEvents-<bd>` | Solo la categoría `SQLSecurityAuditEvents` | `ENABLE_SQL_AUDIT` |
-
-El segundo depende de `ENABLE_SQL_AUDIT` y **no** de `ENABLE_LOG_ANALYTICS`, a propósito: es el
-transporte del rastro de auditoría, no un destino opcional, así que apagar Log Analytics no puede
-volver a romper la auditoría sin avisar.
-
-Comprueba que los dos existen. Si solo aparece uno, la auditoría no está emitiendo:
-
-```bash
-DB_ID=$(az sql db show -g rg-usersvc -s <servidor> -n sqldb-users --query id -o tsv)
-az monitor diagnostic-settings list --resource "$DB_ID"   --query "value[].{name:name, categorias:logs[?enabled].category, grupos:logs[?enabled].categoryGroup}" -o json
-
-# Y que la politica esta activa con Azure Monitor como destino
-az sql db audit-policy show -g rg-usersvc -s <servidor> -n sqldb-users   --query "{state:state, azureMonitor:isAzureMonitorTargetEnabled}" -o json
+```
+Conflict: Data sink '.../workspaces/log-usersvc' is already used in diagnostic setting
+'diag-sqldb-users' for category 'SQLSecurityAuditEvents'. Data sinks can't be reused in
+different settings on the same category for the same resource.
 ```
 
-> **Aviso operativo de la propia documentación:** si alguien borra ese Diagnostic Setting, la
+Ese error es, de paso, la prueba de que `allLogs` cubre la categoría de auditoría.
+
+**Consecuencia práctica, y es la que importa:** el Diagnostic Setting genérico es *también* el
+destino del rastro de auditoría. Si se apaga, la auditoría se queda muda sin dar ningún error. Por
+eso su condición en [`infra/modules/sql.bicep`](infra/modules/sql.bicep) es
+`if (enableLogAnalytics || enableSqlAudit)`: con la auditoría encendida el setting se crea
+**aunque** pongas `ENABLE_LOG_ANALYTICS=false`, precisamente para que seguir el consejo de apagar
+Log Analytics cuando el monitor nativo de New Relic ya reenvía los logos no rompa la auditoría en
+silencio.
+
+#### Si la auditoría está activa y no llega nada
+
+Recorre esto en orden, que es el diagnóstico real:
+
+```bash
+# 1. La politica de auditoria esta activa y apunta a Azure Monitor?
+az sql db audit-policy show -g rg-usersvc -s <servidor> -n sqldb-users   --query "{state:state, azureMonitor:isAzureMonitorTargetEnabled, grupos:auditActionsAndGroups}" -o json
+# state debe ser Enabled y azureMonitor true
+
+# 2. Existe el Diagnostic Setting que recoge la categoria?
+DB_ID=$(az sql db show -g rg-usersvc -s <servidor> -n sqldb-users --query id -o tsv)
+az monitor diagnostic-settings list --resource "$DB_ID"   --query "value[].{name:name, grupos:logs[?enabled].categoryGroup, categorias:logs[?enabled].category}" -o json
+
+# 3. Hay registros en la tabla?
+WS=$(az monitor log-analytics workspace show -g rg-usersvc -n log-usersvc --query customerId -o tsv)
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+SQLSecurityAuditEvents | summarize count() by bin(TimeGenerated, 5m) | order by TimeGenerated desc"
+```
+
+Causas por orden de probabilidad si el paso 1 devuelve `Disabled`:
+
+| Causa | Comprobación |
+|-------|--------------|
+| Existe una **variable de repositorio** `ENABLE_SQL_AUDIT` con valor `false`, que gana al valor por defecto del workflow | `Settings > Secrets and variables > Actions > Variables` |
+| No se ha redesplegado desde que se activó | Revisar la fecha del último run de `deploy` |
+| El despliegue falló en el paso *Deploy infrastructure* y no llegó a aplicar la política | Log del workflow |
+
+Y si el paso 1 está bien pero el 3 sale vacío: recuerda que `BATCH_COMPLETED_GROUP` solo registra
+sentencias **ejecutadas**. Genera tráfico contra la API antes de mirar.
+
+> **Aviso operativo de la propia documentación:** si alguien borra el Diagnostic Setting, la
 > auditoría deja de emitir sin ningún error. Microsoft recomienda crear una alerta sobre el
 > borrado de diagnostic settings. En este PoC el redespliegue lo recrea, pero en un entorno real
-> conviene la alerta.
+> esa alerta es lo que evita descubrirlo cuando alguien pide una auditoría.
 
 #### Auditoría o logs de la aplicación: cuál usar
 
@@ -774,7 +914,7 @@ Recorre esta lista en orden; está ordenada por probabilidad.
 | Llegan logs pero **no sentencias SQL** | `SQL_LOG_LEVEL` sigue en `INFO`, que es el valor por defecto | Ponerla en `DEBUG` y redesplegar. Ver [5.2](#52-logs-de-sql-hay-que-activarlos) |
 | No hay **logs de BD en Log Analytics** | Las consultas correctas no generan logs de plataforma; solo lo hacen los errores, timeouts, bloqueos y el Query Store cada 60 min | Mirar `AzureMetrics` en vez de `AzureDiagnostics`. Ver [5.3](#53-logs-de-plataforma-del-servicio-sql) |
 | La entidad de la BD en New Relic dice **"0 logs found"** | Sin errores no hay logs de plataforma que reenviar, y la auditoría está apagada por defecto | `ENABLE_SQL_AUDIT=true` y redesplegar. Ver [5.4](#54-auditoría-el-log-por-sentencia-del-propio-motor) |
-| **`ENABLE_SQL_AUDIT=true` y aun así no llega nada.** `audit-policy show` dice `Enabled` | Falta el Diagnostic Setting dedicado con la categoría `SQLSecurityAuditEvents` explícita. Un `categoryGroup: allLogs` **no** sirve, y la auditoría falla en silencio: despliegue en verde, política activa, cero registros | Comprobar que existen **dos** settings sobre la base de datos con `az monitor diagnostic-settings list`. Ver [5.4](#la-auditoría-necesita-su-propio-diagnostic-setting-o-falla-en-silencio) |
+| **`ENABLE_SQL_AUDIT=true` y aun así no llega nada** | Lo más probable: existe una variable de repositorio `ENABLE_SQL_AUDIT=false` que gana al valor por defecto del workflow, o no se ha redesplegado. Si `audit-policy show` dice `Disabled`, la política no se aplicó | Seguir el diagnóstico de [5.4](#si-la-auditoría-está-activa-y-no-llega-nada) paso a paso |
 | No hay **logs de BD en New Relic** | El Diagnostic Setting hacia New Relic tarda en crearse tras el despliegue | `az monitor diagnostic-settings list --resource <id de la BD>`. Ver [10.3](#103-cuánto-tarda-en-empezar-a-fluir) |
 | Los datos llegan **con retraso** | Normal: 1-2 min para trazas y logs, hasta 30 s de intervalo de exportación para métricas | Esperar y refrescar |
 | Un cambio de variable **no se refleja** | La aplicación no ha releído los settings | El pipeline reinicia la app y verifica los settings; revisar el paso *Verify the effective application settings* |

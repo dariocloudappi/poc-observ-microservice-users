@@ -16,9 +16,15 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 @Component
-@Order(1)
+// HIGHEST_PRECEDENCE y no 1: la cadena de filtros de Spring Security se
+// registra en -100, asi que con cualquier orden mayor Security corre antes,
+// responde 401 y nunca invoca este filtro. El resultado era que las
+// peticiones rechazadas no dejaban ni log ni http.status_code. Envolviendo
+// toda la cadena, TODA respuesta queda registrada con su codigo.
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class RequestLoggingFilter extends OncePerRequestFilter{
 
     private static final Logger log = LoggerFactory.getLogger(RequestLoggingFilter.class);

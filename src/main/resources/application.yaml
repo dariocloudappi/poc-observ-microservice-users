@@ -26,6 +26,9 @@ app:
   security:
     username: ${BASIC_AUTH_USER}
     password: ${BASIC_AUTH_PASSWORD}
+  httpbin:
+    # Destino de la llamada saliente de demostracion del endpoint /get.
+    url: ${APP_HTTPBIN_URL:https://httpbin.org/get}
 
 
 management:

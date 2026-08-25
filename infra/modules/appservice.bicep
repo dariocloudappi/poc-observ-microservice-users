@@ -233,6 +233,34 @@ var otelEnabledSettings = [
     value: 'application'
   }
   // ---------------------------------------------------------------------
+  // HTTP headers on the spans
+  // ---------------------------------------------------------------------
+  // The agent can put selected headers on the span as attributes
+  // http.request.header.<name> and http.response.header.<name>. It never
+  // captures bodies: that is not part of the OTel HTTP conventions and no
+  // setting enables it, so the request and response payloads are logged by the
+  // application in OutboundHttpLoggingInterceptor instead.
+  //
+  // authorization is deliberately absent from every list. traceparent IS
+  // included on purpose: it makes the context propagation visible, which is the
+  // point of the /get demo endpoint.
+  {
+    name: 'OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_REQUEST_HEADERS'
+    value: 'content-type,user-agent,x-forwarded-for,traceparent'
+  }
+  {
+    name: 'OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS'
+    value: 'content-type,x-trace-id'
+  }
+  {
+    name: 'OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_REQUEST_HEADERS'
+    value: 'content-type,user-agent,traceparent,x-poc-source'
+  }
+  {
+    name: 'OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_RESPONSE_HEADERS'
+    value: 'content-type,server'
+  }
+  // ---------------------------------------------------------------------
   // Database telemetry over OTLP
   // ---------------------------------------------------------------------
   {
