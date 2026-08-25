@@ -97,6 +97,10 @@ env:
   AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
   POC_OWNER: ${{ vars.POC_OWNER || 'unknown' }}
   NR_REGION: ${{ vars.NR_REGION || 'eu' }}
+  # Region del recurso monitor, distinta de la del PoC: el tipo
+  # NewRelic.Observability/monitors no existe en todas las regiones. No afecta
+  # a la cobertura, que es de toda la suscripcion por tag rules.
+  NR_MONITOR_LOCATION: ${{ vars.NR_MONITOR_LOCATION || 'eastus' }}
   NR_RESOURCE_GROUP: ${{ inputs.resource_group }}
   NR_MONITOR_NAME: ${{ inputs.monitor_name }}
   NR_SEND_METRICS: ${{ inputs.send_metrics }}
@@ -172,6 +176,32 @@ jobs:
           fi
           az provider show --namespace NewRelic.Observability \
             --query "{namespace:namespace,state:registrationState}" -o table
+
+      # NewRelic.Observability/monitors no existe en todas las regiones, y la
+      # lista depende de la suscripcion. En lugar de fijar una y que el
+      # despliegue falle con LocationNotAvailableForResourceType, se pregunta al
+      # propio proveedor y se elige una valida.
+      - name: Resolve a valid region for the monitor resource
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
+          raw=$(az provider show --namespace NewRelic.Observability \
+            --query "resourceTypes[?resourceType=='monitors'].locations | [0]" -o json)
+          echo "Regions offered by the provider: ${raw}"
+
+          # El proveedor devuelve nombres para mostrar ("East US") y ARM espera
+          # el nombre corto ("eastus").
+          available=$(echo "$raw" | jq -r '.[]? | ascii_downcase | gsub(" "; "")')
+
+          if [ -z "$available" ]; then
+            echo "::warning::The provider reported no regions for the monitor resource. Keeping ${NR_MONITOR_LOCATION}."
+          elif echo "$available" | grep -qx "$NR_MONITOR_LOCATION"; then
+            echo "${NR_MONITOR_LOCATION} is available for the monitor resource."
+          else
+            chosen=$(echo "$available" | head -1)
+            echo "::warning title=Monitor region adjusted::${NR_MONITOR_LOCATION} is not available for NewRelic.Observability/monitors. Using ${chosen} instead. Available: $(echo $available | tr '\n' ' ')"
+            echo "NR_MONITOR_LOCATION=${chosen}" >> "$GITHUB_ENV"
+          fi
 
       # A second monitor linked to the same organization would duplicate every
       # log record. This workflow is identical in every microservice repository

@@ -1006,6 +1006,8 @@ definen se usa el valor por defecto.
 | `SQL_SKU_NAME` | `Basic`, `S0` o `GP_S_Gen5_1` (serverless) | `Basic` |
 | `SQL_DATABASE_NAME` | Nombre de la base de datos | `sqldb-users` |
 | `NR_OTLP_ENDPOINT` | Endpoint OTLP. EU: `https://otlp.eu01.nr-data.net:4318`, US: `https://otlp.nr-data.net:4318` | `https://otlp.eu01.nr-data.net:4318` |
+| `NR_REGION` | Región de la cuenta de New Relic, `eu` o `us`. Solo la usa `newrelic-native-integration` | `eu` |
+| `NR_MONITOR_LOCATION` | Región del recurso monitor de New Relic. **No es la del PoC**: el tipo `NewRelic.Observability/monitors` no existe en todas las regiones. El workflow consulta al proveedor y la corrige sola si el valor no es válido | `eastus` |
 | `OTEL_SERVICE_NAME` | Nombre del servicio en New Relic | `microservice-users` |
 | `ENVIRONMENT` | Atributo `deployment.environment` | `poc` |
 | `SERVICE_NAMESPACE` | Atributo `service.namespace`, común a todo el PoC | `poc-observability` |
@@ -1269,6 +1271,19 @@ Secrets que necesita:
 | `NR_LICENSE_KEY` | El mismo ingest key que ya usa la aplicación |
 
 Y la variable `NR_REGION` (`eu` o `us`), que debe coincidir con la región de la cuenta.
+
+El recurso monitor **no vive en la misma región que el PoC**, y no es un descuido: el tipo
+`NewRelic.Observability/monitors` solo está disponible en algunas regiones, y desplegarlo en
+`westeurope` falla con `LocationNotAvailableForResourceType`. No afecta a la cobertura, porque las
+tag rules aplican a **toda la suscripción** independientemente de donde viva el monitor.
+
+El workflow lo resuelve solo: pregunta al proveedor qué regiones ofrece y, si la configurada no
+está en la lista, usa la primera válida y lo deja avisado en el resumen. Para consultarlo a mano:
+
+```bash
+az provider show --namespace NewRelic.Observability   --query "resourceTypes[?resourceType=='monitors'].locations" -o json
+```
+
 
 ### 10.2 Después de ejecutarlo
 
