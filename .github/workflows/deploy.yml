@@ -78,7 +78,11 @@ jobs:
     name: Ensure the New Relic native integration
     uses: ./.github/workflows/newrelic-native-integration.yml
     secrets: inherit
-    continue-on-error: true
+    with:
+      # Si faltan los secrets de New Relic, avisa y no hace nada en lugar de
+      # fallar. GitHub no admite continue-on-error en un job que invoca un
+      # workflow reutilizable, asi que la tolerancia va dentro del workflow.
+      skip_if_unconfigured: 'true'
 
   deploy:
     name: Build and deploy
