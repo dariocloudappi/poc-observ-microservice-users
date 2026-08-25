@@ -446,6 +446,10 @@ resource siteDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
   scope: site
   properties: {
     workspaceId: logAnalyticsWorkspaceId
+    // Tablas dedicadas: AppServiceHTTPLogs, AppServiceConsoleLogs,
+    // AppServiceAppLogs, AppServicePlatformLogs. Sin esto todo cae en la tabla
+    // generica AzureDiagnostics y esas tablas salen vacias.
+    logAnalyticsDestinationType: 'Dedicated'
     logs: [
       {
         categoryGroup: 'allLogs'

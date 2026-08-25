@@ -863,6 +863,159 @@ hora** en aparecer.
 
 Mientras tanto, los logs sí están en Log Analytics y se consultan con la KQL de arriba.
 
+#### Azure dice "Sending" pero la pestaña *Logs* de la entidad está vacía
+
+Es el caso que más confunde, y **no es un fallo**. En el portal, sobre el recurso monitor >
+*Monitored Resources*, la columna *Logs to New Relic* en `Sending` significa que Azure está
+entregando. Si aun así la pestaña **Logs** de la entidad de la base de datos en New Relic dice
+*"We can't find any logs from this host"*, el motivo es dónde se busca:
+
+Esa pestaña correlaciona por **entidad de host**, y los logs que llegan de Azure Monitor no son
+logs de un host: son registros con atributos de Azure (`resourceId`, `category`, `operationName`).
+New Relic no los asocia a la entidad de infraestructura, así que la pestaña sale vacía **aunque
+los logs estén en la cuenta**.
+
+Búscalos por su atributo real, en **Query your data**:
+
+```sql
+-- Todo lo que llega de Azure Monitor, por recurso y categoria
+SELECT count(*) FROM Log
+WHERE resourceId IS NOT NULL SINCE 3 hours ago FACET resourceId, category
+
+-- Solo lo de SQL. El resourceId de Azure llega en MAYUSCULAS
+SELECT timestamp, category, operationName, resourceId FROM Log
+WHERE resourceId LIKE '%MICROSOFT.SQL%' SINCE 3 hours ago LIMIT 100
+```
+
+Si esas consultas devuelven filas, está todo funcionando y lo único que pasaba es que la pestaña
+de la entidad no es el sitio. Si devuelven cero **y** Azure dice `Sending`, entonces no se está
+generando ningún evento: repasa el bloque anterior, porque las categorías de Azure SQL son de
+eventos excepcionales y una consulta correcta no produce ninguna.
+
+Detalle que ayuda a interpretar la lista: junto a la base de datos aparece también **`master`**.
+Es normal y es buena señal: ahí es donde el motor escribe los eventos de conexión al servidor
+lógico.
+
+#### "Metrics not configured" es otra cosa, y probablemente un permiso
+
+En la misma pantalla, la columna *Metrics to New Relic* puede aparecer como **Metrics not
+configured** aunque las `tagRules` que despliega la plantilla pidan `sendMetrics: Enabled`.
+
+Las métricas y los logs no viajan igual. Los logs los entrega el resource provider por
+Diagnostic Settings. Las métricas las **lee** la identidad administrada del monitor, y para eso
+necesita el rol `Monitoring Reader` sobre la suscripción. Azure lo asigna por su cuenta, pero
+crear una asignación de rol requiere permisos de RBAC, y la identidad federada del pipeline tiene
+`Contributor`, que **no puede crear asignaciones de rol**.
+
+```bash
+# Que rol tiene la identidad del monitor
+MON_PRINCIPAL=$(az resource show -g rg-newrelic-shared -n newrelic-poc-observability   --resource-type "NewRelic.Observability/monitors" --query identity.principalId -o tsv)
+az role assignment list --assignee "$MON_PRINCIPAL" --all -o table
+
+# Y que dicen las tag rules realmente desplegadas
+az resource show -g rg-newrelic-shared --name "newrelic-poc-observability/default"   --resource-type "NewRelic.Observability/monitors/tagRules" --query properties -o json
+```
+
+Si la lista de roles sale vacía, asígnalo una vez a mano con una identidad que sí tenga permisos
+de RBAC:
+
+```bash
+SUB_ID=$(az account show --query id -o tsv)
+az role assignment create --assignee-object-id "$MON_PRINCIPAL"   --assignee-principal-type ServicePrincipal   --role "Monitoring Reader" --scope "/subscriptions/$SUB_ID"
+```
+
+No afecta a los logs, que es lo que estábamos persiguiendo: esos ya llegan sin este rol.
+
+#### Los logs siguen vacíos en New Relic: el orden correcto de comprobación
+
+"Sending" en el portal significa **el canal está sano**, no "hay datos". Separa las dos preguntas
+en este orden, porque cada una se responde en un sitio distinto:
+
+**1. ¿Se está generando algo?** Se responde en Log Analytics, no en New Relic.
+
+```bash
+WS=$(az monitor log-analytics workspace show -g rg-usersvc -n log-usersvc --query customerId -o tsv)
+
+# Auditoria
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+SQLSecurityAuditEvents | summarize count() by bin(TimeGenerated, 10m) | order by TimeGenerated desc | take 20"
+
+# Resto de categorias de SQL
+az monitor log-analytics query --workspace "$WS" --analytics-query "
+AzureDiagnostics | where ResourceProvider == 'MICROSOFT.SQL'
+| summarize count() by Category | order by count_ desc"
+```
+
+Si esto sale **vacío**, New Relic no puede tener nada: no existe el dato. Lo primero a descartar
+es que la política de auditoría esté realmente aplicada, y para eso hace falta un despliegue
+**verde**: si el módulo `sql` falló en el último run, la política no se creó.
+
+```bash
+az sql db audit-policy show -g rg-usersvc -s <servidor> -n sqldb-users   --query "{state:state, azureMonitor:isAzureMonitorTargetEnabled}" -o json
+```
+
+**2. Si el paso 1 tiene filas y New Relic no**, entonces el problema es el destino o la consulta.
+No adivines el nombre de los atributos: pregúntaselo a New Relic.
+
+```sql
+-- Que atributos traen realmente los logs de esta cuenta
+SELECT keyset() FROM Log SINCE 1 day ago
+
+-- De donde viene cada log que llega
+SELECT count(*) FROM Log SINCE 1 day ago FACET service.name, collector.name, instrumentation.provider
+```
+
+Con eso ves si existe `resourceId` o si viene con otro nombre, y si hay algún log de origen Azure.
+
+**Y comprueba que es la misma cuenta.** Es la causa que más cuesta ver:
+
+| Camino | A qué cuenta de New Relic entrega |
+|--------|-----------------------------------|
+| Telemetría OTLP de la aplicación | La cuenta asociada a `NR_LICENSE_KEY` |
+| Logs de Azure Monitor | La cuenta cuyo id está en `NR_ACCOUNT_ID` |
+
+Si esos dos no son la misma cuenta, verás los logs de la aplicación donde estás mirando y los de
+la base de datos en otra, sin ningún error en ninguna parte. Compara el `NR_ACCOUNT_ID` del secret
+con el id de cuenta que aparece en la esquina de la interfaz donde estás consultando.
+
+#### Tabla dedicada o AzureDiagnostics: por qué una consulta correcta sale vacía
+
+Síntoma real que costó encontrar: la auditoría genera miles de registros y la tabla
+`SQLSecurityAuditEvents` está vacía.
+
+```
+AzureDiagnostics | where ResourceProvider == 'MICROSOFT.SQL'
+| summarize count() by Category
+-->  SQLSecurityAuditEvents  3676
+     DatabaseWaitStatistics   261
+     ...
+
+SQLSecurityAuditEvents | summarize count() by bin(TimeGenerated, 10m)
+-->  []
+```
+
+No es una contradicción: son dos **modos de recolección** del Diagnostic Setting.
+
+| Modo | Dónde acaba el dato | Columnas |
+|------|---------------------|----------|
+| `AzureDiagnostics` (**por defecto**) | Todo en la tabla genérica `AzureDiagnostics`, con `Category` como discriminador | Dinámicas y con sufijo de tipo: `statement_s`, `client_ip_s`, `duration_milliseconds_d` |
+| `Dedicated` | Una tabla por categoría: `SQLSecurityAuditEvents`, `AppServiceHTTPLogs`, `ContainerRegistryLoginEvents`... | Con su nombre real: `Statement`, `ClientIp`, `DurationMs` |
+
+Los Diagnostic Settings de este PoC declaran ahora **`logAnalyticsDestinationType: 'Dedicated'`**,
+que es lo que hace válidas las consultas de este README. Sin esa línea, la categoría aparece en
+`AzureDiagnostics` y la tabla dedicada existe pero vacía.
+
+**Al cambiarlo, el dato anterior no se mueve.** Lo ya ingestado se queda en `AzureDiagnostics` y
+solo lo nuevo va a la tabla dedicada, así que justo después de redesplegar conviene consultar las
+dos. Equivalencia para el dato antiguo:
+
+```kusto
+AzureDiagnostics
+| where ResourceProvider == 'MICROSOFT.SQL' and Category == 'SQLSecurityAuditEvents'
+| project TimeGenerated, statement_s, server_principal_name_s, client_ip_s, duration_milliseconds_d
+| order by TimeGenerated desc | take 50
+```
+
 #### Auditoría o logs de la aplicación: cuál usar
 
 Las dos ven las mismas consultas, pero no sirven para lo mismo.

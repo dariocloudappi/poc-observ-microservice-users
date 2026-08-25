@@ -112,6 +112,12 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   scope: database
   properties: {
     workspaceId: logAnalyticsWorkspaceId
+    // Tablas dedicadas. El valor por defecto es AzureDiagnostics, y con el TODO
+    // acaba en la tabla generica AzureDiagnostics: la tabla
+    // SQLSecurityAuditEvents se queda vacia y las columnas pierden su nombre
+    // (Statement pasa a statement_s, ClientIp a client_ip_s...). Sin esta linea
+    // la auditoria se genera pero no se puede consultar como esta documentado.
+    logAnalyticsDestinationType: 'Dedicated'
     logs: [
       {
         categoryGroup: 'allLogs'
