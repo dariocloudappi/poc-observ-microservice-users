@@ -17,10 +17,6 @@ on:
       - 'docs/**'
   workflow_dispatch:
     inputs:
-      auto_destroy_minutes:
-        description: 'Minutes before the resource group is deleted automatically. 0 disables the automatic cleanup'
-        required: false
-        default: '60'
       observability_enabled:
         description: 'Attach the OpenTelemetry agent and export to New Relic'
         required: false
@@ -205,7 +201,7 @@ jobs:
           # The .bicepparam file declares its own template through "using",
           # so --template-file must not be passed here.
           outputs=$(az deployment sub create \
-            --name "users-${GITHUB_RUN_ID}" \
+            --name "users-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --location "$AZURE_LOCATION" \
             --parameters infra/main.bicepparam \
             --query properties.outputs -o json)
@@ -365,36 +361,3 @@ jobs:
             echo
             echo "Remember to run the destroy workflow when the PoC is over."
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # -------------------------------------------------------------------------
-  # Automatic cleanup, so a forgotten PoC does not keep billing
-  # -------------------------------------------------------------------------
-  auto-destroy:
-    name: Automatic cleanup
-    needs: deploy
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_destroy_minutes != '0' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-
-      - name: Wait for the configured TTL
-        env:
-          MINUTES: ${{ inputs.auto_destroy_minutes }}
-        run: |
-          set -euo pipefail
-          echo "Waiting ${MINUTES} minute(s) before deleting ${AZURE_RESOURCE_GROUP}."
-          sleep "$(( MINUTES * 60 ))"
-
-      - name: Azure login with OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Delete the resource group
-        run: |
-          set -euo pipefail
-          echo "Deleting resource group ${AZURE_RESOURCE_GROUP}"
-          az group delete --name "$AZURE_RESOURCE_GROUP" --yes
-          echo "Resource group deleted."

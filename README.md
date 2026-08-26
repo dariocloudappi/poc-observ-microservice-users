@@ -63,14 +63,16 @@ flowchart LR
 
 ```
 src/main/java/com/example/microserviceusersapplication/
-├── config/         SecurityConfig, WebConfig, TraceIdInterceptor
-├── controllers/    UsersController, SystemController
+├── config/         SecurityConfig, HttpClientConfig, OutboundHttpLoggingInterceptor
+├── controllers/    UsersController, SystemController, HttpBinController
 ├── dtos/           envolturas de respuesta (DataEnvelope, ErrorEnvelope...)
 ├── exceptions/     GlobalExceptionHandler y excepciones de dominio
-├── filters/        RequestLoggingFilter (log de entrada/salida + atributos de traza)
+├── filters/        RequestLoggingFilter (log de entrada/salida, X-Trace-Id y Baggage)
+├── logging/        LevelMdcTurboFilter (expone el nivel como atributo en New Relic)
 ├── models/         entidad User y requests de entrada
+├── observability/  Observability (anota span y MDC a la vez, y propaga Baggage)
 ├── repository/     UserRepository (Spring Data JPA)
-└── services/       UserService, SystemService
+└── services/       UserService, SystemService, HttpBinService
 
 infra/
 ├── main.bicep              infraestructura del PoC (scope: suscripción)
@@ -80,7 +82,6 @@ infra/
 
 .github/workflows/
 ├── deploy.yml                      build + infra + despliegue + smoke tests
-├── destroy.yml                     borrado manual y limpieza programada
 ├── newrelic-native-integration.yml integración nativa de Azure con New Relic
 └── newrelic-azure-integration.yml  integración por polling (alternativa)
 ```
@@ -1171,8 +1172,6 @@ definen se usa el valor por defecto.
 | `ENABLE_LOG_ANALYTICS` | Enviar los Diagnostic Settings a Log Analytics. Ponlo a `false` cuando el servicio nativo de New Relic ya reenvíe los logs, para no ingerir el mismo dato dos veces | `true` |
 | `ENABLE_ACTIVITY_LOG_EXPORT` | Exportar el Activity Log de la suscripción | `false` |
 | `ENABLE_SQL_AUDIT` | Activa Azure SQL Auditing, el único log por sentencia que emite el motor. Verboso: enciéndelo solo mientras lo necesites | `false` |
-| `ENABLE_SCHEDULED_CLEANUP` | Activa la limpieza horaria programada | desactivada |
-| `POC_MAX_AGE_HOURS` | Edad máxima antes del borrado programado | `2` |
 
 > **`NR_OTLP_ENDPOINT` debe corresponder a la región de tu cuenta de New Relic.** Una license
 > key europea contra el endpoint de EE. UU. devuelve `403` y no se ingesta nada.
@@ -1335,7 +1334,6 @@ done
 
 | Input | Descripción | Por defecto |
 |-------|-------------|-------------|
-| `auto_destroy_minutes` | Minutos hasta borrar el resource group. `0` lo desactiva | `60` |
 | `observability_enabled` | Adjuntar el agente OTel y exportar a New Relic | `true` |
 
 Qué hace el pipeline:
@@ -1360,7 +1358,6 @@ Qué hace el pipeline:
    - `/users` sin credenciales debe devolver `401`.
    - `/users` **con** credenciales debe devolver `200`, lo que prueba que la conexión a
      Azure SQL funciona de extremo a extremo.
-9. Job `auto-destroy`: espera el TTL y borra el resource group.
 
 Cambiar una variable o un secreto en GitHub y relanzar `deploy` **basta** para que el App
 Service lo recoja: los app settings se aplican como recurso hijo
@@ -1495,8 +1492,8 @@ retraso **no afecta** a las métricas, que las recoge el resource provider por s
 la telemetría OTLP de la aplicación, que llega desde el primer segundo.
 
 **Implicación práctica:** el patrón "creo el resource group y lo destruyo en 60 minutos" es el
-peor caso posible para los logs de plataforma. Despliega con `auto_destroy_minutes = 0`,
-espera a que aparezca el Diagnostic Setting y a partir de ahí redespliega solo la aplicación.
+peor caso posible para los logs de plataforma. Despliega, espera a que aparezca el Diagnostic Setting y a partir de ahí
+redespliega solo la aplicación: al no haber borrado automático, los recursos persisten.
 
 ### 10.4 Integración por polling (alternativa)
 
@@ -1596,31 +1593,24 @@ ni health check, así que los arranques en frío hacen fallar los smoke tests.
 
 ## 13. Limpieza de recursos
 
-### Manual
+> **No hay borrado automático.** Se eliminaron el workflow `destroy` y el job `auto-destroy`
+> del pipeline porque fallaban. **La limpieza es manual**, así que el PoC sigue facturando hasta
+> que lo borres tú.
 
-Actions > `destroy` > `Run workflow`, escribiendo `DESTROY` en el input de confirmación.
-Borra el Diagnostic Setting de suscripción (si se creó) y después el resource group entero,
-incluidos el servidor SQL y la base de datos.
-
-### Automática
-
-- **`auto-destroy` de `deploy.yml`**: espera `auto_destroy_minutes` (60 por defecto) y borra
-  el grupo. Solo en ejecuciones manuales del workflow. Cancelar la ejecución cancela la
-  limpieza.
-- **Limpieza programada de `destroy.yml`**: cada hora, si `ENABLE_SCHEDULED_CLEANUP=true`,
-  borra los resource groups con `project=poc-microservice-users` y `environment=poc` cuyo tag
-  `createdAt` supere `POC_MAX_AGE_HOURS`.
-
-### CLI
+### CLI, la única vía
 
 ```bash
 az group delete --name rg-usersvc --yes
 az monitor diagnostic-settings subscription delete --name diag-activitylog-usersvc --yes
 ```
 
-> **Advertencia de coste.** Si no destruyes el PoC, el App Service Plan B1 y la base de datos
-> facturan de forma continua aunque no haya tráfico: del orden de **17 EUR al mes**. El
-> borrado del resource group elimina también la base de datos y **sus backups**.
+> **Advertencia de coste, y ahora importa más.** Al no haber ninguna red de seguridad
+> automática, un PoC olvidado factura indefinidamente: el App Service Plan B1 y la base de datos
+> suman del orden de **17 EUR al mes** aunque no haya tráfico. Pon un recordatorio o un
+> [Azure Budget](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-acm-create-budgets)
+> con alerta sobre el resource group.
+>
+> El borrado del resource group elimina también la base de datos y **sus backups**.
 
 `rg-newrelic-shared`, el del monitor nativo, **no** se borra con el PoC: es compartido y
 sobrevive a propósito.
@@ -1655,6 +1645,12 @@ Son aceptables en un PoC y no lo serían en producción:
    de Azure**, no solo la tuya. Lo correcto sería VNet + private endpoint, que en App Service
    requiere plan Standard o superior.
 4. `ddl-auto: update` deja que Hibernate modifique el esquema en caliente.
+5. **Todos los recursos tienen el acceso público de red habilitado**: el workspace de Log
+   Analytics, el servidor SQL y, en el gateway, el registro de contenedores. Es necesario porque
+   los runners de GitHub están fuera de cualquier VNet y son quienes consultan el workspace,
+   aplican el esquema y suben las imágenes. Cerrarlo exige Private Link **más** runners
+   autohospedados dentro de la VNet. Está anotado en cada plantilla junto a la propiedad, con la
+   referencia `S6329` del analizador que lo marca.
 
 ### Rotación de secretos
 

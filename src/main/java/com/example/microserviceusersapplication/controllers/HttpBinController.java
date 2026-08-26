@@ -1,7 +1,10 @@
 package com.example.microserviceusersapplication.controllers;
 
 import com.example.microserviceusersapplication.dtos.DataEnvelope;
+import com.example.microserviceusersapplication.observability.Observability;
 import com.example.microserviceusersapplication.services.HttpBinService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +27,8 @@ import java.util.Map;
 @RequestMapping("/get")
 public class HttpBinController {
 
+    private static final Logger log = LoggerFactory.getLogger(HttpBinController.class);
+
     private final HttpBinService httpBinService;
 
     public HttpBinController(HttpBinService httpBinService) {
@@ -32,6 +37,15 @@ public class HttpBinController {
 
     @GetMapping
     public ResponseEntity<DataEnvelope<Map<String, Object>>> get() {
-        return ResponseEntity.ok(new DataEnvelope<>(httpBinService.get()));
+        Observability.attr("api.operation", "httpbin.get");
+        log.debug("Entrando en httpbin.get");
+
+        Map<String, Object> payload = httpBinService.get();
+
+        log.atInfo()
+                .addKeyValue("api.operation", "httpbin.get")
+                .addKeyValue("http.status_code", 200)
+                .log("Respuesta de httpbin devuelta al cliente");
+        return ResponseEntity.ok(new DataEnvelope<>(payload));
     }
 }
