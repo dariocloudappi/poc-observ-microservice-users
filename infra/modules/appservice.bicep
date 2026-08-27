@@ -42,6 +42,9 @@ param environmentName string
 param serviceNamespace string
 param logLevel string
 
+@description('Habilita el endpoint /force-errors, que provoca el codigo de error que se le pida. Permite a cualquier consumidor autenticado provocar 5xx, asi que con false responde 404 y la ruta queda oculta')
+param forceErrorsEnabled bool = true
+
 @description('Log level of the Hibernate SQL logger. DEBUG ships every executed statement to New Relic as a log record')
 param sqlLogLevel string = 'INFO'
 
@@ -141,6 +144,14 @@ var securitySettings = [
   {
     name: 'BASIC_AUTH_PASSWORD'
     value: basicAuthPassword
+  }
+  {
+    // Leida por application.yaml como app.force-errors.enabled.
+    // Va aqui, con las de seguridad, y no con las de observabilidad: es una
+    // decision de EXPOSICION, no de telemetria. El endpoint deja provocar 5xx a
+    // cualquier consumidor autenticado.
+    name: 'FORCE_ERRORS_ENABLED'
+    value: string(forceErrorsEnabled)
   }
 ]
 
@@ -246,7 +257,7 @@ var otelEnabledSettings = [
   // point of the /get demo endpoint.
   {
     name: 'OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_REQUEST_HEADERS'
-    value: 'content-type,user-agent,x-forwarded-for,traceparent'
+    value: 'content-type,user-agent,x-forwarded-for,traceparent,baggage'
   }
   {
     name: 'OTEL_INSTRUMENTATION_HTTP_SERVER_CAPTURE_RESPONSE_HEADERS'
@@ -254,11 +265,11 @@ var otelEnabledSettings = [
   }
   {
     name: 'OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_REQUEST_HEADERS'
-    value: 'content-type,user-agent,traceparent,x-poc-source'
+    value: 'content-type,user-agent,traceparent,baggage,x-poc-source'
   }
   {
     name: 'OTEL_INSTRUMENTATION_HTTP_CLIENT_CAPTURE_RESPONSE_HEADERS'
-    value: 'content-type,server'
+    value: 'content-type,server,x-trace-id'
   }
   // ---------------------------------------------------------------------
   // Database telemetry over OTLP
@@ -272,6 +283,24 @@ var otelEnabledSettings = [
     // Off by default: adds a span for DataSource.getConnection, which is how
     // connection pool waits become visible in a trace.
     name: 'OTEL_INSTRUMENTATION_JDBC_DATASOURCE_ENABLED'
+    value: 'true'
+  }
+  {
+    // Spans de CONTROLADOR automaticos, sin listar nada.
+    //
+    // Es la mejor opcion disponible para esa capa: el agente conoce Spring MVC,
+    // asi que instrumenta el metodo del controlador el solo y cubre tambien los
+    // controladores que se anadan en el futuro. No hay lista que mantener.
+    //
+    // Por eso OTEL_INSTRUMENTATION_METHODS_INCLUDE, mas abajo, ya NO enumera
+    // controladores: solo la capa de servicio, que es la que ningun framework
+    // puede instrumentar por si mismo porque son clases propias.
+    //
+    // CAVEAT: la propiedad lleva "experimental" en el nombre. Puede cambiar entre
+    // versiones del agente, asi que al subir otel-agent.version conviene
+    // comprobar que los spans de controlador siguen apareciendo.
+    // Ref: https://opentelemetry.io/docs/zero-code/java/agent/disable/
+    name: 'OTEL_INSTRUMENTATION_COMMON_EXPERIMENTAL_CONTROLLER_TELEMETRY_ENABLED'
     value: 'true'
   }
   {
@@ -291,6 +320,14 @@ var otelEnabledSettings = [
     // aqui es redundante porque cada metodo ya llama a Observability.attr con
     // sus claves de negocio.
     //
+    // Aqui SOLO va la capa de servicio. Los controladores los cubre
+    // OTEL_INSTRUMENTATION_COMMON_EXPERIMENTAL_CONTROLLER_TELEMETRY_ENABLED, mas
+    // arriba, que no necesita lista. Estas clases son propias y ningun framework
+    // las conoce, asi que enumerarlas es la unica via.
+    //
+    // NO admite comodines: la sintaxis documentada es Clase[metodo,metodo] y no
+    // hay patrones ni globs. Comprobado en la documentacion oficial.
+    //
     // Sintaxis: paquete.Clase[metodo1,metodo2];paquete.OtraClase[metodo]
     // Ref: https://opentelemetry.io/docs/zero-code/java/agent/annotations/
     //
@@ -300,9 +337,6 @@ var otelEnabledSettings = [
     // primero.
     name: 'OTEL_INSTRUMENTATION_METHODS_INCLUDE'
     value: join([
-      'com.example.microserviceusersapplication.controllers.UsersController[getUsers,getUserById,createUser,updateUser,deleteUser]'
-      'com.example.microserviceusersapplication.controllers.SystemController[getStatus]'
-      'com.example.microserviceusersapplication.controllers.HttpBinController[get]'
       'com.example.microserviceusersapplication.services.UserService[getUsers,getUser,createUser,updateUser,deleteUser]'
       'com.example.microserviceusersapplication.services.SystemService[getStatus,checkDatabase]'
       'com.example.microserviceusersapplication.services.HttpBinService[get]'

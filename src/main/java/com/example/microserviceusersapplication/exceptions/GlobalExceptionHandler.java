@@ -87,6 +87,33 @@ public class GlobalExceptionHandler {
         return clientError(ex, 409, "CONFLICT", "Conflicto: el usuario ya existe");
     }
 
+    /**
+     * Error provocado desde /force-errors.
+     *
+     * Reutiliza annotateSpan para que la telemetria sea IDENTICA a la de un
+     * error real: si es 5xx se registra la excepcion en el span y su status pasa
+     * a ERROR. Es lo que hace que sirva para probar una alerta de verdad.
+     */
+    @ExceptionHandler(ForcedErrorException.class)
+    public ResponseEntity<ErrorEnvelope> handleForcedError(ForcedErrorException ex) {
+        int status = ex.getStatus();
+        boolean serverFault = status >= 500;
+
+        // Marca que permite separar el ruido de las demos de los errores reales.
+        Observability.attr("error.forced", true);
+        annotateSpan(ex, status, "FORCED_ERROR", serverFault);
+
+        var event = serverFault ? log.atError() : log.atWarn();
+        event.addKeyValue("error.type", ex.getClass().getSimpleName())
+                .addKeyValue("error.code", "FORCED_ERROR")
+                .addKeyValue("error.forced", true)
+                .addKeyValue("http.status_code", status)
+                .log("Error provocado {}: {}", status, ex.getMessage());
+
+        return ResponseEntity.status(status)
+                .body(new ErrorEnvelope("FORCED_ERROR", ex.getMessage()));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorEnvelope> handleGeneral(Exception ex) {
         // Unico caso que SI marca el span como error: aqui si es un fallo del
