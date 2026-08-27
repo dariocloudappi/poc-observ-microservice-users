@@ -29,6 +29,15 @@ param enableLogAnalytics bool = true
 @description('Enable Azure SQL Auditing. The diagnostic categories the database publishes by default only report problems (errors, timeouts, blocks, deadlocks), so a query that succeeds produces no log at all. Auditing is the only per statement log the engine itself emits. Off by default because it is verbose and every record counts against the daily ingestion cap')
 param enableSqlAudit bool = false
 
+@description('Reenviar los resource logs de SQL a un Event Hub para que el colector OTel los lleve a New Relic. La integracion nativa de New Relic NO reenvia resource logs, asi que sin esto SQLSecurityAuditEvents nunca sale de Azure')
+param enableSqlLogForwarding bool = false
+
+@description('Id de la regla de autorizacion con permiso Send del Event Hub. Obligatorio si enableSqlLogForwarding esta activo')
+param eventHubSenderRuleId string = ''
+
+@description('Nombre del Event Hub destino')
+param eventHubName string = ''
+
 // Basic is capped at 2 GB by the service. The serverless option gets a larger
 // cap because its storage is billed per GB actually used.
 var maxSizeBytes = sqlSkuName == 'Basic' ? 2147483648 : 34359738368
@@ -141,6 +150,42 @@ resource databaseDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
       }
     ]
   }
+}
+
+// -----------------------------------------------------------------------------
+// Segundo diagnostic setting, este hacia el Event Hub.
+//
+// Convive con el de Log Analytics sin conflicto: el error "Data sinks can't be
+// reused in different settings on the same category" salta cuando dos settings
+// comparten CATEGORIA Y DESTINO. Aqui la categoria es la misma pero el destino
+// es distinto, asi que Azure lo admite.
+//
+// Va al Event Hub y no a New Relic directamente porque no hay forma de apuntar
+// un diagnostic setting a New Relic: su integracion nativa no cubre resource
+// logs. El Event Hub es el unico punto de salida que ofrece Azure.
+// -----------------------------------------------------------------------------
+resource databaseDiagnosticsToEventHub 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableSqlLogForwarding) {
+  name: 'diag-eh-${databaseName}'
+  scope: database
+  properties: {
+    eventHubAuthorizationRuleId: eventHubSenderRuleId
+    eventHubName: eventHubName
+    logs: [
+      {
+        categoryGroup: 'allLogs'
+        enabled: true
+      }
+    ]
+    // Las metricas NO se duplican aqui a proposito: ya llegan a New Relic por
+    // la integracion nativa, que si cubre metricas. Mandarlas tambien por el
+    // Event Hub las contaria dos veces.
+  }
+  // El setting hacia Log Analytics se crea primero: la auditoria depende de el
+  // y encadenar los dos evita que Azure procese ambos en paralelo sobre el
+  // mismo recurso.
+  dependsOn: [
+    databaseDiagnostics
+  ]
 }
 
 // The only per statement log Azure SQL emits. It is written by the engine, not

@@ -41,6 +41,10 @@ env:
   ENABLE_ACTIVITY_LOG_EXPORT: ${{ vars.ENABLE_ACTIVITY_LOG_EXPORT || 'false' }}
   ENABLE_LOG_ANALYTICS: ${{ vars.ENABLE_LOG_ANALYTICS || 'true' }}
   ENABLE_SQL_AUDIT: ${{ vars.ENABLE_SQL_AUDIT || 'true' }}
+  # Reenvio de resource logs de SQL via Event Hub hacia el colector OTel.
+  # La integracion nativa de New Relic no cubre resource logs, asi que sin
+  # esto SQLSecurityAuditEvents no sale de Azure. Cuesta dinero: ver README.
+  ENABLE_SQL_LOG_FORWARDING: ${{ vars.ENABLE_SQL_LOG_FORWARDING || 'true' }}
   SQL_LOG_LEVEL: ${{ vars.SQL_LOG_LEVEL || 'INFO' }}
   APP_SERVICE_SKU: ${{ vars.APP_SERVICE_SKU || 'B1' }}
   SQL_SKU_NAME: ${{ vars.SQL_SKU_NAME || 'Basic' }}
@@ -210,6 +214,32 @@ jobs:
           echo "webapp_url=$(echo "$outputs" | jq -r .webAppUrl.value)" >> "$GITHUB_OUTPUT"
           echo "workspace_name=$(echo "$outputs" | jq -r .logAnalyticsWorkspaceName.value)" >> "$GITHUB_OUTPUT"
           echo "sql_fqdn=$(echo "$outputs" | jq -r .sqlServerFqdn.value)" >> "$GITHUB_OUTPUT"
+
+          # Datos del Event Hub que reenvia los resource logs de SQL. El
+          # pipeline del gateway los necesita para configurar el receptor
+          # azureeventhub del colector. Se publican los NOMBRES, nunca la
+          # cadena de conexion: los outputs de un despliegue quedan guardados
+          # en el historial de la suscripcion en claro.
+          fwd=$(echo "$outputs" | jq -r .sqlLogForwardingEnabled.value)
+          eh_ns=$(echo "$outputs" | jq -r .eventHubNamespace.value)
+          eh_name=$(echo "$outputs" | jq -r .eventHubName.value)
+          echo "eventhub_namespace=${eh_ns}" >> "$GITHUB_OUTPUT"
+          echo "eventhub_name=${eh_name}" >> "$GITHUB_OUTPUT"
+
+          if [ "$fwd" = "true" ]; then
+            {
+              echo "### Reenvio de resource logs de SQL"
+              echo
+              echo "| Dato | Valor |"
+              echo "| --- | --- |"
+              echo "| Namespace | \`${eh_ns}\` |"
+              echo "| Event Hub | \`${eh_name}\` |"
+              echo "| Regla de escucha | \`otel-collector-listener\` |"
+              echo
+              echo "El colector del gateway lo descubre por la etiqueta project."
+              echo "AVISO: el namespace factura por hora aunque no pase ningun mensaje."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # ---------------------------------------------------------------------
       # Application

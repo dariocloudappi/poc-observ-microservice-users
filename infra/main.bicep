@@ -57,6 +57,9 @@ param enableActivityLogExport bool = false
 @description('Enable Azure SQL Auditing, the only per statement log the database engine emits. Without it a successful query leaves no trace in Azure Monitor, because the default categories only report errors, timeouts, blocks and deadlocks. Off by default: it is verbose and every record counts against the daily ingestion cap')
 param enableSqlAudit bool = false
 
+@description('Crear el Event Hub y el diagnostic setting que llevan los resource logs de SQL hasta el colector OTel. OJO: un namespace de Event Hub factura por hora aunque no pase ningun mensaje')
+param enableSqlLogForwarding bool = false
+
 // -----------------------------------------------------------------------------
 // Compute
 // -----------------------------------------------------------------------------
@@ -181,6 +184,19 @@ module monitoring './modules/monitoring.bicep' = {
   }
 }
 
+// Solo se crea si el reenvio esta activo. Con el modo Incremental de ARM,
+// ponerlo en false mas adelante NO borra el namespace: hay que eliminarlo a
+// mano o borrar el grupo de recursos.
+module eventhub './modules/eventhub.bicep' = if (enableSqlLogForwarding) {
+  name: 'eventhub-${uniqueString(deployment().name)}'
+  scope: rg
+  params: {
+    location: location
+    namePrefix: namePrefix
+    tags: tags
+  }
+}
+
 module sql './modules/sql.bicep' = {
   name: 'sql-${uniqueString(deployment().name)}'
   scope: rg
@@ -195,6 +211,11 @@ module sql './modules/sql.bicep' = {
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     enableLogAnalytics: enableLogAnalytics
     enableSqlAudit: enableSqlAudit
+    enableSqlLogForwarding: enableSqlLogForwarding
+    // Con el reenvio apagado el modulo del Event Hub no existe, asi que no se
+    // puede referenciar su output: de ahi el operador ternario.
+    eventHubSenderRuleId: enableSqlLogForwarding ? eventhub.outputs.senderRuleId : ''
+    eventHubName: enableSqlLogForwarding ? eventhub.outputs.hubName : ''
   }
 }
 
@@ -265,3 +286,10 @@ output webAppPrincipalId string = app.outputs.principalId
 output sqlServerFqdn string = sql.outputs.serverFqdn
 output sqlDatabaseName string = sql.outputs.databaseName
 output logAnalyticsWorkspaceName string = monitoring.outputs.workspaceName
+
+// Nombres, NO la cadena de conexion: los outputs de un despliegue quedan en el
+// historial de la suscripcion en claro. El pipeline del gateway recupera la
+// clave con az eventhubs eventhub authorization-rule keys list.
+output sqlLogForwardingEnabled bool = enableSqlLogForwarding
+output eventHubNamespace string = enableSqlLogForwarding ? eventhub.outputs.namespaceName : ''
+output eventHubName string = enableSqlLogForwarding ? eventhub.outputs.hubName : ''

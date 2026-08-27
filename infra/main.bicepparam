@@ -34,6 +34,10 @@ param logDailyQuotaGb = int(readEnvironmentVariable('LOG_DAILY_QUOTA_GB', '1'))
 param enableLogAnalytics = bool(readEnvironmentVariable('ENABLE_LOG_ANALYTICS', 'true'))
 param enableActivityLogExport = bool(readEnvironmentVariable('ENABLE_ACTIVITY_LOG_EXPORT', 'false'))
 param enableSqlAudit = bool(readEnvironmentVariable('ENABLE_SQL_AUDIT', 'true'))
+// Default en true para la PRUEBA que se pide. Acordarse de que el namespace de
+// Event Hub factura por hora: ponerlo a false NO lo borra, hay que eliminarlo
+// a mano o borrar el grupo de recursos.
+param enableSqlLogForwarding = bool(readEnvironmentVariable('ENABLE_SQL_LOG_FORWARDING', 'true'))
 
 param appServiceSku = readEnvironmentVariable('APP_SERVICE_SKU', 'B1')
 param javaOpts = readEnvironmentVariable('JAVA_OPTS', '-Xmx512m')

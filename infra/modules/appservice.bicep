@@ -275,6 +275,40 @@ var otelEnabledSettings = [
     value: 'true'
   }
   {
+    // ------------------------------------------------------------------
+    // Spans por capa de la aplicacion, SIN tocar el codigo
+    // ------------------------------------------------------------------
+    // El agente instrumenta el servidor HTTP, JDBC y el cliente HTTP, pero NO
+    // los metodos de la aplicacion. Sin esto la traza salta del span de
+    // servidor directamente al SELECT y todo lo de en medio aparece como
+    // "Uninstrumented time", sin decir si el tiempo se fue en el controlador,
+    // en el servicio o esperando una conexion del pool.
+    //
+    // Esta es la via ZERO-CODE. La alternativa era la anotacion @WithSpan, que
+    // obliga a anadir la dependencia opentelemetry-instrumentation-annotations
+    // y a tocar cada metodo. Se descarto: su unica ventaja sobre esta
+    // configuracion es @SpanAttribute, que captura argumentos como atributos, y
+    // aqui es redundante porque cada metodo ya llama a Observability.attr con
+    // sus claves de negocio.
+    //
+    // Sintaxis: paquete.Clase[metodo1,metodo2];paquete.OtraClase[metodo]
+    // Ref: https://opentelemetry.io/docs/zero-code/java/agent/annotations/
+    //
+    // MANTENIMIENTO: los nombres son cadenas, no referencias. Renombrar una
+    // clase o un metodo NO da error de compilacion, simplemente dejan de
+    // aparecer los spans. Si una capa desaparece de las trazas, mirar aqui
+    // primero.
+    name: 'OTEL_INSTRUMENTATION_METHODS_INCLUDE'
+    value: join([
+      'com.example.microserviceusersapplication.controllers.UsersController[getUsers,getUserById,createUser,updateUser,deleteUser]'
+      'com.example.microserviceusersapplication.controllers.SystemController[getStatus]'
+      'com.example.microserviceusersapplication.controllers.HttpBinController[get]'
+      'com.example.microserviceusersapplication.services.UserService[getUsers,getUser,createUser,updateUser,deleteUser]'
+      'com.example.microserviceusersapplication.services.SystemService[getStatus,checkDatabase]'
+      'com.example.microserviceusersapplication.services.HttpBinService[get]'
+    ], ';')
+  }
+  {
     // Bridges Micrometer to OTLP, so the Actuator metrics of the connection
     // pool (hikaricp.connections.*, jdbc.connections.*) reach New Relic as
     // metrics instead of staying inside the app.
