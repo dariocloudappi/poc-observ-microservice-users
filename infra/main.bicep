@@ -184,6 +184,22 @@ module monitoring './modules/monitoring.bicep' = {
   }
 }
 
+// El nombre y los ids se calculan AQUI, fuera del modulo, y no se leen de sus
+// outputs.
+//
+// Motivo: el modulo es condicional, asi que Bicep lo tipa como "module | null" y
+// cualquier acceso a eventhub.outputs.X levanta un BCP318 ("may be null at the
+// start of the deployment"). El ternario que lo protege no le basta al
+// comprobador. Derivando los valores con resourceId no hay referencia al modulo
+// y los warnings desaparecen, sin perder la condicionalidad.
+//
+// El nombre del namespace es global en Azure, de ahi el uniqueString. Se usa el
+// id del grupo de recursos, el mismo valor que usaba el modulo, para que el
+// nombre no cambie respecto a lo ya desplegado.
+var eventHubNamespaceName = 'evhns-${namePrefix}-${uniqueString(rg.id)}'
+var eventHubLogsName = 'insights-logs-sql'
+var eventHubSenderRuleName = 'sql-diagnostics-sender'
+
 // Solo se crea si el reenvio esta activo. Con el modo Incremental de ARM,
 // ponerlo en false mas adelante NO borra el namespace: hay que eliminarlo a
 // mano o borrar el grupo de recursos.
@@ -192,8 +208,10 @@ module eventhub './modules/eventhub.bicep' = if (enableSqlLogForwarding) {
   scope: rg
   params: {
     location: location
-    namePrefix: namePrefix
     tags: tags
+    namespaceName: eventHubNamespaceName
+    hubName: eventHubLogsName
+    senderRuleName: eventHubSenderRuleName
   }
 }
 
@@ -212,10 +230,17 @@ module sql './modules/sql.bicep' = {
     enableLogAnalytics: enableLogAnalytics
     enableSqlAudit: enableSqlAudit
     enableSqlLogForwarding: enableSqlLogForwarding
-    // Con el reenvio apagado el modulo del Event Hub no existe, asi que no se
-    // puede referenciar su output: de ahi el operador ternario.
-    eventHubSenderRuleId: enableSqlLogForwarding ? eventhub.outputs.senderRuleId : ''
-    eventHubName: enableSqlLogForwarding ? eventhub.outputs.hubName : ''
+    // El id se construye, no se lee del modulo: ver el comentario de
+    // eventHubNamespaceName mas arriba. La regla de envio es de NAMESPACE, no de
+    // hub, porque es lo que exige eventHubAuthorizationRuleId.
+    eventHubSenderRuleId: enableSqlLogForwarding ? resourceId(
+      subscription().subscriptionId,
+      rg.name,
+      'Microsoft.EventHub/namespaces/authorizationRules',
+      eventHubNamespaceName,
+      eventHubSenderRuleName
+    ) : ''
+    eventHubName: enableSqlLogForwarding ? eventHubLogsName : ''
   }
 }
 
@@ -291,5 +316,5 @@ output logAnalyticsWorkspaceName string = monitoring.outputs.workspaceName
 // historial de la suscripcion en claro. El pipeline del gateway recupera la
 // clave con az eventhubs eventhub authorization-rule keys list.
 output sqlLogForwardingEnabled bool = enableSqlLogForwarding
-output eventHubNamespace string = enableSqlLogForwarding ? eventhub.outputs.namespaceName : ''
-output eventHubName string = enableSqlLogForwarding ? eventhub.outputs.hubName : ''
+output eventHubNamespace string = enableSqlLogForwarding ? eventHubNamespaceName : ''
+output eventHubName string = enableSqlLogForwarding ? eventHubLogsName : ''

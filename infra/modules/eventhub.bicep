@@ -24,19 +24,21 @@
 // =============================================================================
 
 param location string
-param namePrefix string
 param tags object
+
+@description('Nombre del namespace. Lo calcula main.bicep para poder derivar los ids sin leer los outputs de este modulo, que es condicional')
+param namespaceName string
 
 @description('Nombre del Event Hub donde aterrizan los resource logs de SQL')
 param hubName string = 'insights-logs-sql'
+
+@description('Nombre de la regla de autorizacion con permiso Send')
+param senderRuleName string = 'sql-diagnostics-sender'
 
 @description('Retencion en dias. Basic solo admite 1')
 @minValue(1)
 @maxValue(1)
 param retentionDays int = 1
-
-// El nombre del namespace es global en Azure, de ahi el uniqueString.
-var namespaceName = 'evhns-${namePrefix}-${uniqueString(resourceGroup().id)}'
 
 resource namespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
   name: namespaceName
@@ -84,9 +86,21 @@ resource hub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
 // viaja al gateway podria tambien escribir eventos falsos.
 // -----------------------------------------------------------------------------
 
-resource senderRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
-  parent: hub
-  name: 'sql-diagnostics-sender'
+// La regla de ENVIO va a nivel de NAMESPACE, no de event hub, y no es una
+// eleccion: Azure lo exige. Un diagnostic setting con una regla de hub falla con
+//
+//   Resource type 'microsoft.eventhub/namespaces/eventhubs/authorizationrules'
+//   is invalid for property 'properties.eventHubAuthorizationRuleId'.
+//   Expected types are 'microsoft.servicebus/namespaces/authorizationrules',
+//   'microsoft.eventhub/namespaces/authorizationrules'
+//
+// Consecuencia a tener presente: una regla de namespace concede Send sobre
+// TODOS los event hubs del namespace. Aqui es aceptable porque el namespace se
+// crea solo para estos logs y contiene un unico hub, pero si algun dia se
+// anaden mas hubs, este permiso los alcanza a todos.
+resource senderRule 'Microsoft.EventHub/namespaces/authorizationRules@2024-01-01' = {
+  parent: namespace
+  name: senderRuleName
   properties: {
     rights: [
       'Send'
@@ -94,6 +108,10 @@ resource senderRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@
   }
 }
 
+// La de ESCUCHA si se queda a nivel de HUB, y a proposito: la consume el
+// colector OTel con una cadena de conexion, no un diagnostic setting, asi que
+// no le aplica la restriccion anterior. Mantenerla acotada al hub es el minimo
+// privilegio: no puede leer otros hubs del namespace.
 resource listenerRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
   parent: hub
   name: 'otel-collector-listener'
