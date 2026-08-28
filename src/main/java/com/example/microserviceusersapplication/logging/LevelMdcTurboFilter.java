@@ -19,8 +19,8 @@ import org.slf4j.Marker;
  *   SELECT count(*) FROM Log WHERE service.name = 'microservice-users'
  *   SINCE 30 minutes ago FACET level
  *
- * Es un TurboFilter y no un appender a propósito: se ejecuta antes de que el
- * evento llegue a cualquier appender, así que el valor ya está en el MDC cuando
+ * Se implementa como TurboFilter y no como appender porque se ejecuta antes de
+ * que el evento llegue a cualquier appender: el valor ya está en el MDC cuando
  * el appender del agente construye el LogRecord.
  */
 public class LevelMdcTurboFilter extends TurboFilter {

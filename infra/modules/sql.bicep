@@ -176,9 +176,9 @@ resource databaseDiagnosticsToEventHub 'Microsoft.Insights/diagnosticSettings@20
         enabled: true
       }
     ]
-    // Las metricas NO se duplican aqui a proposito: ya llegan a New Relic por
-    // la integracion nativa, que si cubre metricas. Mandarlas tambien por el
-    // Event Hub las contaria dos veces.
+    // Las metricas no se duplican aqui: ya llegan a New Relic por la
+    // integracion nativa, que si cubre metricas. Enviarlas tambien por el Event
+    // Hub supondria contarlas dos veces.
   }
   // El setting hacia Log Analytics se crea primero: la auditoria depende de el
   // y encadenar los dos evita que Azure procese ambos en paralelo sobre el

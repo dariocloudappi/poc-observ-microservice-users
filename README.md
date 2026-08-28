@@ -447,7 +447,7 @@ El mismo fallo estaba en `microservice-orders` y también está corregido allí.
 `GET /get` hace una llamada HTTP a `httpbin.org/get` y devuelve su respuesta tal cual. Existe
 solo para ver cómo se instrumenta una dependencia de salida, y `httpbin` es útil porque
 **devuelve en el cuerpo las cabeceras que ha recibido**: es la forma directa de comprobar qué se
-envía de verdad.
+envía realmente.
 
 ```bash
 curl -s $AUTH "$URL/get" | jq
@@ -509,7 +509,7 @@ Esta distinción importa y no es evidente:
 | **Cuerpo de la petición y de la respuesta** | **La aplicación** | `OutboundHttpLoggingInterceptor`. **El agente no captura cuerpos y no hay ninguna variable que lo active**: no forma parte de las convenciones HTTP de OTel |
 
 Las listas de cabeceras están en [appservice.bicep](infra/modules/appservice.bicep) y en
-[`.env.example`](.env.example). **`authorization` no está en ninguna, a propósito.**
+[`.env.example`](.env.example). **`authorization` no figura en ninguna de las dos, de forma deliberada.**
 `traceparent` sí, justo para poder ver la propagación.
 
 Dos detalles de implementación que conviene conocer si tocas esto:
@@ -640,7 +640,7 @@ En métricas se recogen **dos** de las tres categorías:
 |-----------|----------|--------|
 | `Basic` | DTU, almacenamiento, sesiones, workers, deadlocks, `availability` y los contadores de conexión (`connection_successful`, `connection_failed`, `blocked_by_firewall`) | Activa |
 | `InstanceAndAppAdvanced` | CPU y memoria del motor (`sql_instance_cpu_percent`, `sql_instance_memory_percent`) y uso de tempdb | Activa |
-| `WorkloadManagement` | Métricas `wlg_*` de grupos de carga | **Fuera a propósito**: solo aplica a data warehouses, no a una base de datos única |
+| `WorkloadManagement` | Métricas `wlg_*` de grupos de carga | **Excluida**: solo aplica a data warehouses, no a una base de datos única |
 
 ### 5.3.1 No existe un log de arranque de Azure SQL Database
 
@@ -1222,7 +1222,7 @@ Plantillas por defecto del claim `sub` según el disparador:
 > en el paso *Show the OIDC subject expected by Azure* y lo deja en el resumen del run, antes
 > de intentar el login. Si el login falla, copia ese valor literal al campo `subject` de la
 > credencial federada. Ese paso funciona aunque no tengas nada configurado en Azure todavía,
-> así que puedes lanzar el workflow una vez a propósito solo para leer el valor.
+> de modo que se puede lanzar el workflow una vez con el único fin de leer el valor.
 
 ```bash
 # Ejecuciones sobre la rama main (push y workflow_dispatch sobre main)
@@ -1442,7 +1442,7 @@ az provider show --namespace NewRelic.Observability   --query "resourceTypes[?re
    veces. El workspace se sigue creando: uno sin ingesta no cuesta nada.
 2. Comprueba en el portal, sobre el servidor SQL: **Diagnostic settings** debe mostrar una
    entrada hacia New Relic creada por Azure.
-3. En la web app **no** debe aparecer esa entrada: está excluida a propósito con la etiqueta
+3. En la web app **no** debe aparecer esa entrada: está excluida de forma deliberada mediante la etiqueta
    `newrelicLogs=exclude`, porque el agente OTel ya manda esos logs y llegarían dos veces. Sus
    **métricas** de plataforma sí se recogen, que esas el agente no las ve.
 
@@ -1613,7 +1613,7 @@ az monitor diagnostic-settings subscription delete --name diag-activitylog-users
 > El borrado del resource group elimina también la base de datos y **sus backups**.
 
 `rg-newrelic-shared`, el del monitor nativo, **no** se borra con el PoC: es compartido y
-sobrevive a propósito.
+se conserva de forma deliberada.
 
 ---
 

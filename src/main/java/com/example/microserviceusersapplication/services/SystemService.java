@@ -35,10 +35,9 @@ public class SystemService {
         log.debug("Ejecutando comprobacion de estado del sistema");
         ServiceStatus database = checkDatabase();
 
-        // ServiceStatus es un record en este servicio, asi que el accessor es
-        // status() y no getStatus(). En orders la misma clase es un POJO con
-        // getters: son dos formas distintas del mismo concepto y conviene
-        // saberlo al copiar codigo entre los dos micros.
+        // ServiceStatus es un record en este servicio, por lo que el accessor
+        // es status() y no getStatus(). En orders la misma clase es un POJO con
+        // getters.
         boolean healthy = "ok".equals(database.status());
         Observability.attr("health.overall", healthy ? "ok" : "degraded");
 

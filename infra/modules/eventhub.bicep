@@ -1,12 +1,12 @@
 // =============================================================================
 // Event Hub para reenviar los RESOURCE LOGS de Azure SQL a New Relic
 // -----------------------------------------------------------------------------
-// POR QUE HACE FALTA ESTO
-// -----------------------
-// La integracion nativa de New Relic (NewRelic.Observability/monitors) NO
-// reenvia resource logs. Su objeto logRules solo tiene tres interruptores:
-// sendAadLogs, sendActivityLogs y sendSubscriptionLogs. No existe ningun flag
-// para logs de recurso, y SQLSecurityAuditEvents es exactamente eso.
+// MOTIVO
+// ------
+// La integracion nativa de New Relic (NewRelic.Observability/monitors) no
+// reenvia resource logs. Su objeto logRules solo dispone de tres opciones:
+// sendAadLogs, sendActivityLogs y sendSubscriptionLogs. No existe ninguna para
+// logs de recurso, y SQLSecurityAuditEvents pertenece a esa categoria.
 //
 // Referencia: NewRelic.Observability/monitors/tagRules, propiedad LogRules.
 //
@@ -108,10 +108,10 @@ resource senderRule 'Microsoft.EventHub/namespaces/authorizationRules@2024-01-01
   }
 }
 
-// La de ESCUCHA si se queda a nivel de HUB, y a proposito: la consume el
-// colector OTel con una cadena de conexion, no un diagnostic setting, asi que
-// no le aplica la restriccion anterior. Mantenerla acotada al hub es el minimo
-// privilegio: no puede leer otros hubs del namespace.
+// La regla de escucha permanece a nivel de hub: la consume el colector OTel
+// mediante una cadena de conexion, no un diagnostic setting, por lo que no le
+// aplica la restriccion anterior. Acotarla al hub responde al principio de
+// minimo privilegio, ya que no puede leer otros hubs del namespace.
 resource listenerRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
   parent: hub
   name: 'otel-collector-listener'

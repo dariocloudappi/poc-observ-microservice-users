@@ -20,15 +20,14 @@ import java.util.stream.Collectors;
  * Ademas de traducir la excepcion a una respuesta, cada handler la registra en
  * el span.
  *
- * Por que importa: un @RestControllerAdvice CONSUME la excepcion. Al no
- * propagarse, el agente no la ve y el span queda sin marca de error. El
- * sintoma era que en New Relic se devolvia un 500 y la traza aparecia
- * aparentemente correcta, sin excepcion asociada y sin poder agrupar por tipo
- * de error. recordException y setStatus lo corrigen.
+ * Un @RestControllerAdvice consume la excepcion, de modo que el agente no la
+ * observa y el span queda sin marca de error: la traza aparece correcta aunque
+ * la respuesta sea un 500, sin excepcion asociada y sin posibilidad de agrupar
+ * por tipo de error. recordException y setStatus lo evitan.
  *
- * Los 4xx NO se marcan como error del span a proposito: son errores del
- * cliente. Si se marcasen, la tasa de error del servicio incluiria cada 404 y
- * dejaria de servir para detectar averias reales.
+ * Los 4xx no se marcan como error del span porque son errores del cliente. Si
+ * se marcasen, la tasa de error del servicio incluiria cada 404 y dejaria de
+ * indicar averias reales.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -90,16 +89,16 @@ public class GlobalExceptionHandler {
     /**
      * Error provocado desde /force-errors.
      *
-     * Reutiliza annotateSpan para que la telemetria sea IDENTICA a la de un
-     * error real: si es 5xx se registra la excepcion en el span y su status pasa
-     * a ERROR. Es lo que hace que sirva para probar una alerta de verdad.
+     * Reutiliza annotateSpan para que la telemetria sea identica a la de un
+     * error real: en un 5xx se registra la excepcion en el span y su status pasa
+     * a ERROR, condicion necesaria para validar una alerta.
      */
     @ExceptionHandler(ForcedErrorException.class)
     public ResponseEntity<ErrorEnvelope> handleForcedError(ForcedErrorException ex) {
         int status = ex.getStatus();
         boolean serverFault = status >= 500;
 
-        // Marca que permite separar el ruido de las demos de los errores reales.
+        // Marca que permite distinguir estos errores de los reales.
         Observability.attr("error.forced", true);
         annotateSpan(ex, status, "FORCED_ERROR", serverFault);
 
@@ -150,8 +149,8 @@ public class GlobalExceptionHandler {
             span.recordException(ex);
             span.setStatus(StatusCode.ERROR, code);
         } else {
-            // El tipo se registra igual para poder agrupar, pero sin tocar el
-            // status del span.
+            // El tipo se registra para poder agrupar, sin modificar el status
+            // del span.
             span.setAttribute("error.client_status", status);
         }
     }

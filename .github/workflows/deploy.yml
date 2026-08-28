@@ -21,6 +21,10 @@ on:
         description: 'Attach the OpenTelemetry agent and export to New Relic'
         required: false
         default: 'true'
+      apply_schema:
+        description: 'Apply src/main/resources/database.sql to the database'
+        required: false
+        default: 'true'
 
 permissions:
   id-token: write
@@ -70,10 +74,10 @@ jobs:
   # ejecutarlo en cada despliegue solo reaplica las tag rules. El recurso vive
   # en rg-newrelic-shared y sobrevive al destroy del PoC.
   #
-  # continue-on-error a proposito: es infraestructura compartida y opcional. Si
-  # faltan los secrets NR_ACCOUNT_ID / NR_ORGANIZATION_ID / NR_USER_EMAIL, este
-  # job sale en rojo con el mensaje de que falta configurarlos, pero NO tumba el
-  # despliegue de la aplicacion.
+  # continue-on-error porque es infraestructura compartida y opcional. Si faltan
+  # los secrets NR_ACCOUNT_ID / NR_ORGANIZATION_ID / NR_USER_EMAIL, el job
+  # termina en rojo indicando que falta configurarlos, sin detener el despliegue
+  # de la aplicacion.
   newrelic-monitor:
     name: Ensure the New Relic native integration
     uses: ./.github/workflows/newrelic-native-integration.yml
@@ -213,7 +217,9 @@ jobs:
           echo "webapp_name=$(echo "$outputs" | jq -r .webAppName.value)" >> "$GITHUB_OUTPUT"
           echo "webapp_url=$(echo "$outputs" | jq -r .webAppUrl.value)" >> "$GITHUB_OUTPUT"
           echo "workspace_name=$(echo "$outputs" | jq -r .logAnalyticsWorkspaceName.value)" >> "$GITHUB_OUTPUT"
+          echo "sql_server=$(echo "$outputs" | jq -r .sqlServerName.value)" >> "$GITHUB_OUTPUT"
           echo "sql_fqdn=$(echo "$outputs" | jq -r .sqlServerFqdn.value)" >> "$GITHUB_OUTPUT"
+          echo "sql_database=$(echo "$outputs" | jq -r .sqlDatabaseName.value)" >> "$GITHUB_OUTPUT"
 
           # Datos del Event Hub que reenvia los resource logs de SQL. El
           # pipeline del gateway los necesita para configurar el receptor
@@ -240,6 +246,53 @@ jobs:
               echo "AVISO: el namespace factura por hora aunque no pase ningun mensaje."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # ---------------------------------------------------------------------
+      # Database schema
+      # ---------------------------------------------------------------------
+      # ddl-auto es none, de modo que las tablas se crean explicitamente desde
+      # src/main/resources/database.sql. El runner esta fuera de Azure, asi que
+      # necesita una regla de firewall temporal que se elimina siempre.
+      # ---------------------------------------------------------------------
+      - name: Open the firewall for this runner
+        id: firewall
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_schema == 'true' }}
+        run: |
+          set -euo pipefail
+          runner_ip=$(curl -s --max-time 15 https://api.ipify.org)
+          if [ -z "$runner_ip" ]; then
+            echo "ERROR: could not determine the public IP of the runner" >&2
+            exit 1
+          fi
+          rule="gh-runner-${GITHUB_RUN_ID}"
+          echo "rule_name=${rule}" >> "$GITHUB_OUTPUT"
+          az sql server firewall-rule create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --server "${{ steps.infra.outputs.sql_server }}" \
+            --name "$rule" \
+            --start-ip-address "$runner_ip" \
+            --end-ip-address "$runner_ip" \
+            --output none
+          echo "Temporary firewall rule ${rule} created."
+
+      - name: Apply the database schema
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.apply_schema == 'true' }}
+        uses: azure/sql-action@v2
+        with:
+          # The script is idempotent, so it can run on every deployment.
+          connection-string: 'Server=tcp:${{ steps.infra.outputs.sql_fqdn }},1433;Initial Catalog=${{ steps.infra.outputs.sql_database }};Persist Security Info=False;User ID=${{ secrets.SQL_ADMIN_USER }};Password=${{ secrets.SQL_ADMIN_PASSWORD }};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;'
+          path: ./src/main/resources/database.sql
+
+      - name: Close the firewall for this runner
+        if: ${{ always() && steps.firewall.outputs.rule_name != '' }}
+        run: |
+          set -euo pipefail
+          az sql server firewall-rule delete \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --server "${{ steps.infra.outputs.sql_server }}" \
+            --name "${{ steps.firewall.outputs.rule_name }}" \
+            --output none
+          echo "Temporary firewall rule removed."
 
       # ---------------------------------------------------------------------
       # Application

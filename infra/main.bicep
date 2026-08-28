@@ -165,13 +165,13 @@ resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   tags: tags
 }
 
-// Los nombres de despliegue de los modulos llevan un sufijo unico a proposito.
-// Con un nombre fijo, un despliegue de modulo que se queda colgado bloquea TODOS
-// los siguientes durante 7 dias con:
+// Los nombres de despliegue de los modulos llevan un sufijo unico. Con un
+// nombre fijo, un despliegue de modulo que queda bloqueado impide los
+// siguientes durante 7 dias con:
 //   DeploymentActive: ... cannot be saved, because this would overwrite an
 //   existing deployment which is still active ... will expire at <+7 dias>
 // uniqueString(deployment().name) deriva del nombre del despliegue externo, que
-// el pipeline ya hace unico por ejecucion.
+// la pipeline ya hace unico por ejecucion.
 module monitoring './modules/monitoring.bicep' = {
   name: 'monitoring-${uniqueString(deployment().name)}'
   scope: rg
@@ -308,6 +308,7 @@ output resourceGroupName string = rg.name
 output webAppName string = app.outputs.webAppName
 output webAppUrl string = app.outputs.webAppUrl
 output webAppPrincipalId string = app.outputs.principalId
+output sqlServerName string = sql.outputs.serverName
 output sqlServerFqdn string = sql.outputs.serverFqdn
 output sqlDatabaseName string = sql.outputs.databaseName
 output logAnalyticsWorkspaceName string = monitoring.outputs.workspaceName

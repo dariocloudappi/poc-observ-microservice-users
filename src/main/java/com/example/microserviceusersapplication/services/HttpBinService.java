@@ -19,10 +19,9 @@ import java.util.Map;
 /**
  * Llamada HTTP saliente de demostracion contra httpbin.org.
  *
- * httpbin.org/get devuelve en su cuerpo las cabeceras que ha recibido, asi que
- * es la forma mas directa de comprobar que se envia de verdad, incluida la
- * cabecera traceparent que inyecta el agente OpenTelemetry sin que el codigo
- * haga nada.
+ * httpbin.org/get devuelve en su cuerpo las cabeceras recibidas, lo que permite
+ * comprobar que se envia realmente, incluida la cabecera traceparent que
+ * inyecta el agente OpenTelemetry sin intervencion del codigo.
  */
 @Service
 public class HttpBinService {

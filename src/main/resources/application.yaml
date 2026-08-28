@@ -5,14 +5,27 @@ spring:
   application:
     name: ${OTEL_SERVICE_NAME:MicroServiceUsers}
   datasource:
-    url: jdbc:sqlserver://${SQL_SERVER};database=${SQL_DATABASE};user=${SQL_USERNAME}@${SQL_SERVER_NAME};password=${SQL_PASSWORD};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;
-
+    url: jdbc:sqlserver://${SQL_SERVER}:${SQL_SERVER_PORT};database=${SQL_DATABASE};user=[${SQL_USERNAME}]@${SQL_SERVER_NAME};password=${SQL_PASSWORD};encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;
     username: ${SQL_USERNAME}
     password: ${SQL_PASSWORD}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    hikari:
+      connection-timeout: 5000
+      # -1 permite que la aplicacion arranque aunque la base de datos no
+      # responda todavia. Sin esto, un fallo transitorio de SQL en el arranque
+      # impide levantar el servicio y el endpoint /status no puede informar de
+      # que la dependencia esta caida.
+      initialization-fail-timeout: -1
+      # Validacion explicita en lugar de Connection.isValid(): la consulta pasa
+      # por la instrumentacion JDBC del agente y queda visible como span.
+      connection-test-query: SELECT 1
+      keepalive-time: 30000
   jpa:
     hibernate:
-      ddl-auto: update
+      # El esquema no lo crea la aplicacion, lo aplica el pipeline con
+      # src/main/resources/database.sql. Con update, Hibernate modificaria la
+      # base de datos en cada arranque sin control de versiones ni revision.
+      ddl-auto: none
     # Deliberately false: show-sql writes straight to System.out, which the OTel
     # agent does not instrument, so those lines never reach New Relic. The
     # org.hibernate.SQL logger below goes through Logback, which the agent does
@@ -27,13 +40,12 @@ app:
     username: ${BASIC_AUTH_USER}
     password: ${BASIC_AUTH_PASSWORD}
   force-errors:
-    # Endpoint /force-errors, que provoca el codigo de error que se le pida.
-    # Existe para poder probar alertas y dashboards sin esperar a que algo se
-    # rompa de verdad.
+    # Endpoint /force-errors, que devuelve el codigo de error solicitado. Sirve
+    # para validar alertas y paneles sin esperar a un fallo real.
     #
-    # Va detras del Basic Auth como el resto, pero permite a cualquier consumidor
-    # autenticado provocar 5xx a voluntad. Con false responde 404, para no
-    # revelar que la ruta existe.
+    # Queda detras del Basic Auth, como el resto, pero permite a cualquier
+    # consumidor autenticado provocar respuestas 5xx. Con false responde 404,
+    # para no revelar que la ruta existe.
     enabled: ${FORCE_ERRORS_ENABLED:true}
   httpbin:
     # Destino de la llamada saliente de demostracion del endpoint /get.
@@ -63,8 +75,8 @@ logging:
     com.example.microserviceusersapplication.config: ${LOG_LEVEL:INFO}
     org.springframework.security: INFO
     com.azure: WARN
-    # Every statement Hibernate executes, as a log record correlated with its
-    # trace. Set SQL_LOG_LEVEL=DEBUG to enable it.
+    # Cada sentencia que ejecuta Hibernate, como registro de log correlacionado
+    # con su traza. Se activa con SQL_LOG_LEVEL=DEBUG.
     # The logger name is declared here and not as a LOGGING_LEVEL_ORG_HIBERNATE_SQL
     # app setting on purpose: relaxed binding lowercases environment variable
     # names, and "org.hibernate.sql" is a different logger than "org.hibernate.SQL".
